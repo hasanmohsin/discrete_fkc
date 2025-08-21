@@ -173,31 +173,113 @@ class AnnealSampler(SMCSampler):
     
     
 class RewardSampler(SMCSampler):
-    def __init__(self, denoiser, reward, resample = True, adaptive_resampling = False, steps=10, temperature=1.0):
+    def __init__(self, denoiser, log_reward_func, resample = True, adaptive_resampling = False, steps=10, temperature=1.0):
         super().__init__(denoiser, resample, adaptive_resampling, steps, temperature)
-        self.reward = reward
+        self.log_reward_func = log_reward_func
+        self.anneal_schedule = lambda i: (i) / self.steps
 
     # proposal logits is [B*M, L, V]
-    def get_log_weight_update(self, base_logits, i):
+    def get_log_weight_update(self, base_logits, r_logits, r_i, step):
         ###########################################
         # log weights for resampling 
         
-        log_mu = base_logits.log_softmax(dim=-1)
+        log_mu = base_logits
+        
+        log_mu_r = r_logits 
+        
+        summand =  torch.logsumexp(log_mu - log_mu_r, dim=-1).exp()  # b, l
 
-        t = 1 - torch.tensor(i/self.steps)
-        over_t_ratio = self.steps / (self.steps - i)  
-        offset = - self.beta * over_t_ratio #/ t
+        # coeff = a_t' / (1 - a_t) 
+        
+        
+        t = 1 - torch.tensor((step)/self.steps)
+        t_less = 1 - torch.tensor((step+1)/self.steps)
+        
+        if t_less <= 0.:
+            t_less = 0.1
+        integ_coeff = torch.log(t/(t_less))
     
-        coeff = self.beta * (i)**(self.beta - 1) / (self.steps - i)**self.beta 
-        log_denoiser_anneal = (log_mu)*self.beta 
-        score_anneal_sum = (coeff * log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
+
+        over_t_ratio = self.steps / (self.steps - step)  
+        coeff = - over_t_ratio #/ t
+
+        # r_i has shape [B,]
 
         # get a number per token 
-        g_all_tok = score_anneal_sum + offset  # b, l 
+        delta_b = self.anneal_schedule(step+1) - self.anneal_schedule(step)
+
+        g_all_tok = integ_coeff * summand  + delta_b * r_i.unsqueeze(-1) # b, l 
         
+        print("integ coeffs: ", integ_coeff)
+
         return g_all_tok
 
-    
+
+
+    # evaluate ratio exp( beta * reward(j))/exp( beta * reward(i)), with i = x, j = all Hamming 1 neighbours of x
+    # logits are of shape [B, L, V]
+    def eval_logr_diffs(self, x, logits, step):
+        logits = logits.log_softmax(dim=-1)
+        
+        # shape [B, ]
+        x0_i = self.mask_fill_strat(x)  # [B, L]
+        r_i = self.log_reward_func(x0_i)
+
+        # there are M*V neighbours, where M = number of masked tokens, V = vocab size
+        masked_idx = (x == self.mask_token)
+        num_masked = masked_idx.sum(dim=-1) #[B,] - number of masked for each sample in batch
+
+        r_tilted_logits = torch.clone(logits)
+
+        B, L, V = logits.shape
+        r_j = r_i.reshape((B, 1, 1)).repeat(1, L, V)  # [B, L, V]
+
+        print("B: ", B)
+        print("L: ", L)
+        print("V: ", V)
+        
+      
+        for l in range(L):
+            # if masked, change to v for all in batch
+            masked = (x[:, l] == self.mask_token)
+
+            for v in range(V):
+                
+                
+                #if masked: 
+                x_neighbour = x.clone()
+
+                #print("x neighbour size: ", x_neighbour.shape)
+
+            
+                x_neighbour[masked, l] = v
+
+                x0_n = self.mask_fill_strat(x_neighbour)  # [1, L, V]
+
+                r_j[:, l, v] = self.log_reward_func(x0_n) # should be equal to r_i at ~masked_in_batch positions
+                #else:
+                #    r_j[b, l, v] = r_i[b]  # if not masked, reward is same as r_i
+
+                r_tilted_logits[:, l, v] = logits[:, l, v] + self.anneal_schedule(step) * (r_j[:, l, v] - r_i)
+
+                
+
+
+        print("r_tilted_logits shape: ", r_tilted_logits.shape)
+        print("r_i shape: ", r_i.shape)
+        print("r_j shape: ", r_j.shape)
+        #r_tilted_logits = logits 
+        #r_i = torch.tensor(0.) .to(self.denoiser.device)
+        #r_j = torch.zeros((B,L,V)).to(self.denoiser.device)
+
+        return r_tilted_logits, r_j, r_i
+
+    # takes partially masked token and fills in masked tokens with some strategy
+    # for reward eval
+    def mask_fill_strat(self, x):
+        x_fill = torch.argmax(self.denoiser(x), dim=-1)
+        return x_fill 
+
     # batch size is the number of particles
     @torch.no_grad()
     def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False):
@@ -231,18 +313,19 @@ class RewardSampler(SMCSampler):
             mask_index = (x == self.mask_token)
 
             base_logits = self.denoiser(x)
+            base_logits = base_logits.log_softmax(dim=-1)
 
             # proposal with modified inv temp beta
-            logits = self.beta  * base_logits
+            r_logits, r_j, r_i = self.eval_logr_diffs(x, base_logits, step = i)
 
-            logits_with_noise = add_gumbel_noise(logits, temperature = self.temperature)
+            logits_with_noise = add_gumbel_noise(r_logits, temperature = self.temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
 
             if return_traj:
                 x0_traj.append(x0.clone())
 
             if remasking == 'low_confidence':
-                p = F.softmax(logits.to(torch.float64), dim=-1)
+                p = F.softmax(r_logits.to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
             elif remasking == 'random':
@@ -265,23 +348,26 @@ class RewardSampler(SMCSampler):
 
 
             # update weights
-            g_all_tok = self.get_log_weight_update(base_logits, i)
+            g_all_tok = self.get_log_weight_update(base_logits, r_logits, r_i, step = i)
             g = g_all_tok[transfer_index]
-            log_weights = log_weights + g.unsqueeze(-1) * num_transfer_tokens[:, i].unsqueeze(-1) / self.steps # num_samples, 1
+            log_weights = log_weights + g.unsqueeze(-1) #* num_transfer_tokens[:, i].unsqueeze(-1) / self.steps # num_samples, 1
 
             # for numerical stability
             #log_weights = log_weights - log_weights.max(dim=0, keepdim=True).values
             log_weights_r = log_weights.view(batch_size, num_particles, 1)
             log_weights_norm = log_weights_r - log_weights_r.logsumexp(dim=1, keepdim=True)
             
+            #print("\nstep ", i)
+            #print("log weights: ", log_weights_norm[0, :])
+
             x_r = x.view(batch_size, num_particles, self.length)
 
             # resample (weights may be set to 0 after resampling)
             ess_batch = []
             for b in range(batch_size):
-                print("x_r shape: ", x_r.shape)
-                print("log_weights_norm shape: ", log_weights_norm.shape)
-                print("num_particles: ", num_particles)
+                #print("x_r shape: ", x_r.shape)
+                #print("log_weights_norm shape: ", log_weights_norm.shape)
+                #print("num_particles: ", num_particles)
 
                 x_r[b], log_weights_r[b], ess_b = self.resample_op(log_weights_norm[b], x_r[b], num_particles = num_particles, i = i)
                 ess_batch.append(ess_b.item())
