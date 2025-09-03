@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import random 
 
+from tqdm import tqdm  
 import torch.nn.functional as F
 
 def add_gumbel_noise(logits, temperature):
@@ -26,7 +27,11 @@ class DiffusionSampler():
         self.steps = steps
         self.temperature = temperature
 
-        self.length = self.denoiser.length
+        # if denoiser has a length, set it, otherwise, set to None (and must be initialized with input_seq)
+        if hasattr(self.denoiser, 'length'):
+            self.length = self.denoiser.length
+        else:
+            self.length = None
         self.mask_token = self.denoiser.mask_token
 
     # sampling done with linear noise schedule alpha_t for now (default with LLADA)
@@ -64,7 +69,10 @@ class DiffusionSampler():
 
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
+            self.length = init_seq.shape[-1]
         else:
+            if self.length is None:
+                raise ValueError("self.length is None and no init_seq provided. Either provide init_seq or initialize denoiser with a length attribute.")
             x = torch.full((batch_size, self.length), self.mask_token, dtype=torch.long).to(self.denoiser.device)
 
         prompt_index = (x != self.mask_token)
@@ -78,7 +86,7 @@ class DiffusionSampler():
             x0_traj = []
             x_traj = []
 
-        for i in range(self.steps):
+        for i in tqdm(range(self.steps), 'Sampling'):
             
             mask_index = (x == self.mask_token)
 
@@ -100,6 +108,10 @@ class DiffusionSampler():
 
             if remasking == 'low_confidence':
                 p = F.softmax(logits.to(torch.float64), dim=-1)
+                x0_p = torch.squeeze(
+                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
+            elif remasking == 'low_conf_noisy':
+                p = F.softmax(logits_with_noise.log().to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
             elif remasking == 'random':

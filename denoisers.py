@@ -11,7 +11,15 @@ from target_probs import MogGridEnergyFunction
 from samplers import DiffusionSampler, add_gumbel_noise
 from smc_sampler import AnnealSampler
 
-class AnalyticDenoiser():
+class Denoiser(ABC):
+    
+    @abstractmethod
+    def __call__(self, input_seq):
+        pass
+
+
+
+class AnalyticDenoiser(Denoiser):
     """
     log_prob: function from sequences of tokens (length L) to their probability
     (converted into a prob_table - torch tensor of shape (V, V ,... ,V) (L times) where target_prob[x0, x1, ..., xL] = prob at sequence (x0, x1, .., xL))
@@ -33,6 +41,7 @@ class AnalyticDenoiser():
 
         self.construct_log_prob_table()
 
+   
 
     # Construct the probability table from the probability function
     def construct_log_prob_table(self):

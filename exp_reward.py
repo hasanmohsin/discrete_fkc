@@ -14,7 +14,7 @@ from smc_sampler import AnnealSampler, RewardSampler
 from denoisers import AnalyticDenoiser
 
 def main():
-    num_particles = 100
+    num_particles = 10
     
     batch_size = 1000 // num_particles
 
@@ -98,12 +98,14 @@ def main():
     #print("x traj: ", x_traj)
 
     # plot samples
+    plt.figure()
+    plt.imshow(t_reward_arr.exp().detach().cpu().numpy())
     plt.scatter(x_samples[:, 0].cpu(), x_samples[:, 1].cpu())
     plt.title("Sampled Points")
     plt.xlabel("X-axis")
     plt.ylabel("Y-axis")
     plt.show()
-    plt.savefig("./plots/Reward_Diag_Samples_final_num_particle_{}.png".format(num_particles))
+    plt.savefig("./plots/Reward_Diag_Samples_20_unif_v_final_num_particle_{}.png".format(num_particles))
 
     # intermediate samples
     plt.figure(figsize=(10, 5))
@@ -115,7 +117,7 @@ def main():
     plt.xlabel("X-axis")
     plt.ylabel("Y-axis")
     plt.show()
-    plt.savefig("./plots/Reward_Diag_Intermediate_Samples_num_particles_{}.png".format(num_particles))
+    plt.savefig("./plots/Reward_Diag_Intermediate_Samples_20_unif_v_num_particles_{}.png".format(num_particles))
 
 if __name__ == "__main__":
     main()

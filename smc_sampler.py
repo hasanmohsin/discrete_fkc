@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch 
 import numpy as np
+from tqdm import tqdm
 import random 
 
 import torch.nn.functional as F
@@ -187,7 +188,7 @@ class RewardSampler(SMCSampler):
         
         log_mu_r = r_logits 
         
-        summand =  torch.logsumexp(log_mu - log_mu_r, dim=-1).exp()  # b, l
+        summand =  torch.sum(log_mu.exp() - log_mu_r.exp(), dim=-1)  # b, l
 
         # coeff = a_t' / (1 - a_t) 
         
@@ -214,11 +215,11 @@ class RewardSampler(SMCSampler):
 
         return g_all_tok
 
-
-
     # evaluate ratio exp( beta * reward(j))/exp( beta * reward(i)), with i = x, j = all Hamming 1 neighbours of x
     # logits are of shape [B, L, V]
-    def eval_logr_diffs(self, x, logits, step):
+    def eval_logr_diffs_unif(self, x, logits, step):
+        N = 20
+        
         logits = logits.log_softmax(dim=-1)
         
         # shape [B, ]
@@ -238,29 +239,97 @@ class RewardSampler(SMCSampler):
         print("L: ", L)
         print("V: ", V)
         
-      
+        # sample N vocab tokens, without replacement
+        v_list = torch.randperm(V, device=logits.device)[:N]
+
         for l in range(L):
             # if masked, change to v for all in batch
             masked = (x[:, l] == self.mask_token)
 
             for v in range(V):
                 
+                if v in v_list:
+                    #if masked: 
+                    x_neighbour = x.clone()
+
+                    #print("x neighbour size: ", x_neighbour.shape)
+
+                
+                    x_neighbour[masked, l] = v
+
+                    x0_n = self.mask_fill_strat(x_neighbour)  # [1, L, V]
+
+                    r_j[:, l, v] = self.log_reward_func(x0_n) # should be equal to r_i at ~masked_in_batch positions
+                    #else:
+                    #    r_j[b, l, v] = r_i[b]  # if not masked, reward is same as r_i
+                else:
+                    r_j[:, l, v] = r_i
+
+                r_tilted_logits[:, l, v] = logits[:, l, v] + self.anneal_schedule(step) * (r_j[:, l, v] - r_i)
+
+                
+
+
+        print("r_tilted_logits shape: ", r_tilted_logits.shape)
+        print("r_i shape: ", r_i.shape)
+        print("r_j shape: ", r_j.shape)
+        #r_tilted_logits = logits 
+        #r_i = torch.tensor(0.) .to(self.denoiser.device)
+        #r_j = torch.zeros((B,L,V)).to(self.denoiser.device)
+
+        return r_tilted_logits, r_j, r_i
+
+    # evaluate ratio exp( beta * reward(j))/exp( beta * reward(i)), with i = x, j = all Hamming 1 neighbours of x
+    # logits are of shape [B, L, V]
+    # select_idx is the list of indices that will be unmasked this step (based on base_logits)
+    def eval_logr_diffs(self, x, logits, step, base_transfer_idx):
+        logits = logits.log_softmax(dim=-1)
+        
+        # shape [B, ]
+        x0_i = self.mask_fill_strat(x)  # [B, L]
+        r_i = self.log_reward_func(x0_i)
+
+        # there are M*V neighbours, where M = number of masked tokens, V = vocab size
+        masked_idx = (x == self.mask_token)
+        num_masked = masked_idx.sum(dim=-1) #[B,] - number of masked for each sample in batch
+
+        r_tilted_logits = torch.clone(logits)
+
+        B, L, V = logits.shape
+        r_j = r_i.reshape((B, 1, 1)).repeat(1, L, V)  # [B, L, V]
+
+        print("B: ", B)
+        print("L: ", L)
+        print("V: ", V)
+        
+        row_idx, selected_idx = torch.where(base_transfer_idx)      
+        
+
+        assert(row_idx.shape[0] == B)
+
+        for b in range(B): 
+            # if masked, change to v for all in batch
+            # masked = (x[b, l] == self.mask_token)
+            l = selected_idx[b]
+
+            for v in range(V):
+                
                 
                 #if masked: 
-                x_neighbour = x.clone()
+                x_neighbour = x[b, ...].clone() #[L,]
 
                 #print("x neighbour size: ", x_neighbour.shape)
 
             
-                x_neighbour[masked, l] = v
+                x_neighbour[l] = v
 
-                x0_n = self.mask_fill_strat(x_neighbour)  # [1, L, V]
+                x0_n = self.mask_fill_strat(x_neighbour.unsqueeze(0))  # [1, L, V]
 
-                r_j[:, l, v] = self.log_reward_func(x0_n) # should be equal to r_i at ~masked_in_batch positions
+                r_j[b, l, v] = self.log_reward_func(x0_n)[0] # should be equal to r_i at ~masked_in_batch positions
                 #else:
                 #    r_j[b, l, v] = r_i[b]  # if not masked, reward is same as r_i
 
-                r_tilted_logits[:, l, v] = logits[:, l, v] + self.anneal_schedule(step) * (r_j[:, l, v] - r_i)
+                r_tilted_logits[b, l, v] = logits[b, l, v] + self.anneal_schedule(step) * (r_j[b, l, v] - r_i[b])
 
                 
 
@@ -277,15 +346,58 @@ class RewardSampler(SMCSampler):
     # takes partially masked token and fills in masked tokens with some strategy
     # for reward eval
     def mask_fill_strat(self, x):
-        x_fill = torch.argmax(self.denoiser(x), dim=-1)
-        return x_fill 
+        
+        # theoretically correct way, requires call to denoiser
+        # instead of argmax, sample from denoiser
+        """
+        logits = self.denoiser(x)
+        B, L, V = logits.shape
+
+        x_fill = torch.multinomial(logits.exp().reshape(B*L, V), num_samples=1).squeeze(-1).reshape(B,L)
+        # x_fill shape is [B,L]
+        #x_fill = torch.argmax(self.denoiser(x), dim=-1) 
+        """
+
+        # other way
+        x_fill = torch.where(x == self.mask_token, self.x0_base, x)
+        return x_fill
+
+    def get_base_transfer_idx(self, i, base_logits, mask_index, num_transfer_tokens, remasking='low_confidence'):
+        logits_with_noise = add_gumbel_noise(base_logits, temperature = self.temperature)
+        x0 = torch.argmax(logits_with_noise, dim=-1) 
+        
+        if remasking == 'low_confidence':
+            p = F.softmax(base_logits.to(torch.float64), dim=-1)
+            x0_p = torch.squeeze(
+                torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)  # b, l
+        elif remasking == 'low_conf_noisy':
+            p = F.softmax(logits_with_noise.log().to(torch.float64), dim=-1)
+            x0_p = torch.squeeze(
+                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
+        elif remasking == 'random':
+            x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
+        else:
+            raise NotImplementedError(remasking)
+     
+        confidence = torch.where(mask_index, x0_p, -np.inf)
+
+        transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+        
+        for j in range(confidence.shape[0]):
+            _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+            transfer_index[j, select_index] = True
+
+        return transfer_index, x0
 
     # batch size is the number of particles
     @torch.no_grad()
     def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False):
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
+            self.length = x.shape[-1]
         else:
+            if self.length is None:
+                raise ValueError("self.length is None and no init_seq provided. Either provide init_seq or initialize denoiser with a length attribute.")
             x = torch.full((batch_size, num_particles, self.length), self.mask_token, dtype=torch.long).to(self.denoiser.device)
 
         # for resampling 
@@ -308,15 +420,20 @@ class RewardSampler(SMCSampler):
             log_weights_traj = []
             ess_traj = []
 
-        for i in range(self.steps):
+        for i in tqdm(range(self.steps), "Sampling"):
             
             mask_index = (x == self.mask_token)
 
             base_logits = self.denoiser(x)
             base_logits = base_logits.log_softmax(dim=-1)
 
+            base_transfer_idx, x0_base = self.get_base_transfer_idx(i, base_logits, mask_index, num_transfer_tokens, remasking=remasking)
+
+            # to optionally use in mask_fill strat
+            self.x0_base = x0_base
+
             # proposal with modified inv temp beta
-            r_logits, r_j, r_i = self.eval_logr_diffs(x, base_logits, step = i)
+            r_logits, r_j, r_i = self.eval_logr_diffs(x, base_logits, step = i, base_transfer_idx=base_transfer_idx)
 
             logits_with_noise = add_gumbel_noise(r_logits, temperature = self.temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
@@ -324,6 +441,7 @@ class RewardSampler(SMCSampler):
             if return_traj:
                 x0_traj.append(x0.clone())
 
+            """
             if remasking == 'low_confidence':
                 p = F.softmax(r_logits.to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
@@ -332,17 +450,19 @@ class RewardSampler(SMCSampler):
                 x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
             else:
                 raise NotImplementedError(remasking)
-
+            """
            
             x0 = torch.where(mask_index, x0, x)
-            confidence = torch.where(mask_index, x0_p, -np.inf)
+            #confidence = torch.where(mask_index, x0_p, -np.inf)
 
-            transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
-            for j in range(confidence.shape[0]):
-                _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
-                transfer_index[j, select_index] = True
+            #transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+            #for j in range(confidence.shape[0]):
+            #    _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+            #    transfer_index[j, select_index] = True
+            #
+            transfer_index = base_transfer_idx
             x[transfer_index] = x0[transfer_index]
-
+            
             if return_traj:
                 x_traj.append(x.clone())
 
