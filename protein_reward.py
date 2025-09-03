@@ -16,7 +16,7 @@ from dplm.generate_dplm import initialize_generation
 
 
 class SubstringReward():
-    def __init__(self, target_string, tokenizer, device, beta = 10.0):
+    def __init__(self, target_string, tokenizer, device, beta = 1.0):
         self.target_string = target_string
         self.tokenizer = tokenizer
 
