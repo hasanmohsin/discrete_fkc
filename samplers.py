@@ -7,6 +7,10 @@ import random
 from tqdm import tqdm  
 import torch.nn.functional as F
 
+import wandb 
+from datetime import datetime  
+import utils
+
 def add_gumbel_noise(logits, temperature):
     '''
     The Gumbel max is a method for sampling categorical distributions.
@@ -24,6 +28,17 @@ class DiffusionSampler():
 
     def __init__(self, denoiser, steps=10, temperature=1.0):
         self.denoiser = denoiser
+
+        if hasattr(denoiser, 'tokenizer'):
+            self.tokenizer = denoiser.tokenizer
+        else:
+            self.tokenizer = None
+
+        if hasattr(denoiser, 'log_prob_table'):
+            self.log_prob_target = denoiser.log_prob_table
+        else:
+            self.log_prob_target = None
+
         self.steps = steps
         self.temperature = temperature
 
@@ -59,13 +74,24 @@ class DiffusionSampler():
         return num_transfer_tokens
 
     @ torch.no_grad()
-    def sample(self, init_seq = None, batch_size = 10, cfg_scale = 0., remasking='low_confidence', return_traj = False):
+    def sample(self, init_seq = None, batch_size = 10, cfg_scale = 0., remasking='low_confidence', return_traj = False, sampling_strat= "default", log_wandb = True):
         '''
             init_seq: A tensor of shape (1, L).
             remasking: Remasking strategy. 'low_confidence' or 'random'.
         '''
         #x = torch.full((batch_size, self.length), self.mask_token, dtype=torch.long).to(self.denoiser.device)
         #x[:, :init_seq.shape[1]] = init_seq.clone()
+
+        if log_wandb:
+            utils.setup_wandb_run(project = "discrete_fkc", 
+                                  config = {"sampler": "default", 
+                                   "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+                                   "steps": self.steps, 
+                                   "temperature": self.temperature, 
+                                   "cfg_scale": cfg_scale, 
+                                   "remasking": remasking, 
+                                   "sampling_strat": sampling_strat,
+                                   "batch_size": batch_size})
 
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
@@ -102,7 +128,7 @@ class DiffusionSampler():
 
             logits_with_noise = add_gumbel_noise(logits, temperature = self.temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
-
+         
             if return_traj:
                 x0_traj.append(x0.clone())
 
@@ -111,7 +137,7 @@ class DiffusionSampler():
                 x0_p = torch.squeeze(
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
             elif remasking == 'low_conf_noisy':
-                p = F.softmax(logits_with_noise.log().to(torch.float64), dim=-1)
+                p = F.log_softmax(logits_with_noise.log().to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
             elif remasking == 'random':
@@ -127,11 +153,26 @@ class DiffusionSampler():
             for j in range(confidence.shape[0]):
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
-            x[transfer_index] = x0[transfer_index]
+            
         
+            if log_wandb:
+                
+                utils.wandb_log_xt(i, logits, x, x0, self.tokenizer, self.log_prob_target, mask_token = self.mask_token)
+                #wandb.log({"num_masked_tokens": int((x == self.mask_token).sum().item())})
+               
+            x[transfer_index] = x0[transfer_index]
+
+
             if return_traj:
                 x_traj.append(x.clone())
     
+        # log final sample
+        if log_wandb:
+            #wandb.log({"step": self.steps})
+            utils.wandb_log_xt(self.steps, logits, x, x0, self.tokenizer, self.log_prob_target, mask_token = self.mask_token)
+            #wandb.log({"num_masked_tokens": int((x == self.mask_token).sum().item())})
+
+
         if return_traj:
             return x, x0_traj, x_traj
         

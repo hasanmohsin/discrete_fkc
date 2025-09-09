@@ -39,6 +39,7 @@ class AnalyticDenoiser(Denoiser):
             (vocab_size,) * length
         ).to(device)
 
+        self.tokenizer = None 
         self.construct_log_prob_table()
 
    
@@ -80,6 +81,8 @@ class AnalyticDenoiser(Denoiser):
 
             if len(dims_to_sum) > 0:
                 denoise_logits[masked_pos[m], :] = masked_p.logsumexp(dim=dims_to_sum).log_softmax(dim=-1)
+            else:
+                denoise_logits[masked_pos[m], :] = masked_p.log_softmax(dim=-1)
 
         return denoise_logits # should be of shape [L, V]
 
