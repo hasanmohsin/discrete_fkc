@@ -28,7 +28,8 @@ class DiffusionSampler():
 
     def __init__(self, denoiser, steps=10, temperature=1.0):
         self.denoiser = denoiser
-
+        self.device = denoiser.device
+        
         if hasattr(denoiser, 'tokenizer'):
             self.tokenizer = denoiser.tokenizer
         else:
@@ -85,6 +86,7 @@ class DiffusionSampler():
         if log_wandb:
             utils.setup_wandb_run(project = "discrete_fkc", 
                                   config = {"sampler": "default", 
+                                   "denoiser_name": self.denoiser.name,
                                    "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
                                    "steps": self.steps, 
                                    "temperature": self.temperature, 

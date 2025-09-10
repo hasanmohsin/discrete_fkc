@@ -4,9 +4,11 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import random 
+from datetime import datetime 
 
 import torch.nn.functional as F
 
+import utils 
 from samplers import DiffusionSampler, add_gumbel_noise
 from resample import systematic_resample
 
@@ -50,6 +52,7 @@ class AnnealSampler(SMCSampler):
     def __init__(self, denoiser, beta, resample = True, adaptive_resampling = False, steps=10, temperature=1.0):
         super().__init__(denoiser, resample, adaptive_resampling, steps, temperature)
         self.beta = beta
+        self.sampling_strat = 'annealSMC'
 
     # proposal logits is [B*M, L, V]
     def get_log_weight_update(self, base_logits, i):
@@ -74,7 +77,21 @@ class AnnealSampler(SMCSampler):
     
     # batch size is the number of particles
     @torch.no_grad()
-    def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False):
+    def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False, log_wandb = True):
+        if log_wandb:
+            utils.setup_wandb_run(project = "discrete_fkc", 
+                                  config = {"sampler": "AnnealSMC", 
+                                    "denoiser_name": self.denoiser.name,
+                                    "anneal_beta": self.beta,
+                                   "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+                                   "steps": self.steps, 
+                                   "temperature": self.temperature, 
+                                   "cfg_scale": cfg_scale, 
+                                   "remasking": remasking, 
+                                   "sampling_strat": self.sampling_strat,
+                                   "batch_size": batch_size,
+                                   "num_particles": num_particles})
+        
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
         else:
@@ -100,7 +117,7 @@ class AnnealSampler(SMCSampler):
             log_weights_traj = []
             ess_traj = []
 
-        for i in range(self.steps):
+        for i in tqdm(range(self.steps)):
             
             mask_index = (x == self.mask_token)
 
@@ -132,6 +149,9 @@ class AnnealSampler(SMCSampler):
             for j in range(confidence.shape[0]):
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
+
+            x_pre_unmask = x.clone().view(batch_size, num_particles, self.length)
+
             x[transfer_index] = x0[transfer_index]
 
             if return_traj:
@@ -150,12 +170,11 @@ class AnnealSampler(SMCSampler):
             
             x_r = x.view(batch_size, num_particles, self.length)
 
+            x_pre_resample = x_r.clone()
+
             # resample (weights may be set to 0 after resampling)
             ess_batch = []
             for b in range(batch_size):
-                print("x_r shape: ", x_r.shape)
-                print("log_weights_norm shape: ", log_weights_norm.shape)
-                print("num_particles: ", num_particles)
 
                 x_r[b], log_weights_r[b], ess_b = self.resample_op(log_weights_norm[b], x_r[b], num_particles = num_particles, i = i)
                 ess_batch.append(ess_b.item())
@@ -163,9 +182,38 @@ class AnnealSampler(SMCSampler):
             x = x_r.view(batch_size * num_particles, self.length)
             log_weights = log_weights_r.view(batch_size * num_particles, 1)
 
+            if log_wandb:
+                utils.wandb_log_xt_smc(i, 
+                                       logits, 
+                                       x_pre_unmask, 
+                                       x_pre_resample,
+                                       x_r, 
+                                       x0,
+                                       self.tokenizer,
+                                       log_weights_norm, 
+                                       ess_batch,
+                                       self.log_prob_target,
+                                       self.mask_token,
+                                       show_logits = False)
+
             if return_traj:
                 ess_traj.append(ess_batch)
                 log_weights_traj.append(log_weights_norm)
+
+        # final log for wandb, to show all particles unmasked
+        if log_wandb:
+            utils.wandb_log_xt_smc(i+1, 
+                                   logits,
+                                   x_r,
+                                   x_r,
+                                   x_r,
+                                   x0,
+                                   self.tokenizer,
+                                   log_weights_r, # will be 0's, since after each resampling step, the log weights are set to 0
+                                   ess_batch,
+                                   self.log_prob_target,
+                                   self.mask_token,
+                                   show_logits = False)
 
         if return_traj:
             return x, x0_traj, x_traj, ess_traj, log_weights_traj
