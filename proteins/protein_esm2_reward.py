@@ -24,17 +24,20 @@ sys.path.append(parent_dir)
 
 class ESM2ProteinReward():
     def __init__(self, reference_sequence, tokenizer, device, beta=1.0,
-                 model_name="esm2_t33_650M_UR50D"):
+                 model_name="esm2_t33_650M_UR50D", hf_cache_dir=None):
         self.reference_sequence = reference_sequence
         self.tokenizer = tokenizer  # DPLM tokenizer
         self.beta = beta
         self.device = device
 
+        self.name = "ESM2Reward_" + model_name
+        
+
         # Load ESM2 model and tokenizer
         self.esm_model = EsmForMaskedLM.from_pretrained(
-            f"facebook/{model_name}").to(device)
+            f"facebook/{model_name}", cache_dir=hf_cache_dir).to(device)
         self.esm_tokenizer = AutoTokenizer.from_pretrained(
-            f"facebook/{model_name}")
+            f"facebook/{model_name}", cache_dir=hf_cache_dir)
         self.esm_model.eval()
 
         print(f"Loaded ESM2 model: {model_name}")

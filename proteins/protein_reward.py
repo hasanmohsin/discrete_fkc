@@ -11,6 +11,8 @@ from dplm_denoiser import DPLMDenoiser
 from samplers import DiffusionSampler
 from smc_sampler import RewardSampler
 
+from protein_esm2_reward import ESM2ProteinReward
+
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
@@ -21,6 +23,9 @@ from dplm.generate_dplm import initialize_generation
 
 class SubstringReward():
     def __init__(self, target_string, tokenizer, device, beta = 1.0):
+        
+        self.name = "SubstringReward_Targ_" + target_string
+        
         self.target_string = target_string
         self.tokenizer = tokenizer
 
@@ -64,35 +69,45 @@ def main():
     denoiser = DPLMDenoiser(device=device)
 
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
-    target_string = "N"
+    
+    scratch_dir = os.getenv('SCRATCH')
+    hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
 
-    reward_fn = SubstringReward(target_string, tokenizer, device = device)
-    print("Target IDs: ", reward_fn.target_ids)
+
+
+    
+    #target_string = "N"
+    #reward_fn = SubstringReward(target_string, tokenizer, device = device)
+    #print("Target IDs: ", reward_fn.target_ids)
+
+    reference_sequence = "MSIQ"
+    reward_fn = ESM2ProteinReward(device=device, reference_sequence= reference_sequence, 
+                                  tokenizer = denoiser.dplm.tokenizer, beta=100.0, hf_cache_dir=hf_cache_dir)
 
     
     input_seq = initialize_generation(
-    length=100,
-    num_seqs=10,
+    length=4,
+    num_seqs=2,
     tokenizer=denoiser.dplm.tokenizer,
     device=device
     )
 
-    sampler = DiffusionSampler(denoiser=denoiser, steps = 100, temperature=1.0)
+    sampler = DiffusionSampler(denoiser=denoiser, steps = 5, temperature=1.0)
     r_sampler = RewardSampler(denoiser = denoiser,
                               log_reward_func=reward_fn, 
                               resample=True, 
                               adaptive_resampling=False,
-                              steps = 100,
+                              steps = 4,
                               temperature=1.0)
     x, x0, x_traj = sampler.sample(input_seq, return_traj=True, remasking='low_conf_noisy')
 
     num_particles = 2
-    batch_num = 5
+    batch_num = 1
 
     input_seq_particles = input_seq.reshape(batch_num, num_particles, -1)
 
     x_r, x0_r, x_traj_r, ess_traj, log_weights_traj = r_sampler.sample(input_seq_particles, return_traj=True, remasking='low_conf_noisy',
-                     batch_size = 5, num_particles = 2)
+                     batch_size = batch_num, num_particles = num_particles)
 
     print("Unguided x: ", x)
     print("Guided x: ", x)
