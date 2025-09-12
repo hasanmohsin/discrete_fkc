@@ -29,7 +29,7 @@ class DiffusionSampler():
     def __init__(self, denoiser, steps=10, temperature=1.0):
         self.denoiser = denoiser
         self.device = denoiser.device
-        
+
         if hasattr(denoiser, 'tokenizer'):
             self.tokenizer = denoiser.tokenizer
         else:
@@ -51,8 +51,20 @@ class DiffusionSampler():
         self.mask_token = self.denoiser.mask_token
 
     # sampling done with linear noise schedule alpha_t for now (default with LLADA)
-    
-    
+    def get_alpha_t(self, i):
+        t = 1 - i / self.steps
+
+        alpha_t = 1.0 - t
+
+        return alpha_t 
+
+    # this is alpha_t ' / (1 - alpha_t) = -1/t for linear schedule
+    # used in ELBO weighting for loss
+    def get_elbo_weight(self, i):
+        t = 1 - i / self.steps
+        if i == 0:
+            return -1.0
+        return -self.steps / (self.steps - i)
 
     def get_num_transfer_tokens(self, mask_index, steps):
         '''
@@ -97,7 +109,10 @@ class DiffusionSampler():
 
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
+            
             self.length = init_seq.shape[-1]
+            
+            batch_size = init_seq.shape[0] #override 
         else:
             if self.length is None:
                 raise ValueError("self.length is None and no init_seq provided. Either provide init_seq or initialize denoiser with a length attribute.")

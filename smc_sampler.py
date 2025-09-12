@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 import random 
 from datetime import datetime 
+import wandb 
 
 import torch.nn.functional as F
 
@@ -61,9 +62,12 @@ class AnnealSampler(SMCSampler):
         
         log_mu = base_logits.log_softmax(dim=-1)
 
+        # t=0 corresponds to fully unmasked, and t=1 to fully masked
         t = 1 - torch.tensor(i/self.steps)
-        over_t_ratio = self.steps / (self.steps - i)  
-        offset = - self.beta * over_t_ratio #/ t
+        
+        alpha_t = self.get_alpha_t(i)
+        neg_over_t_ratio = self.get_elbo_weight(i) #-1/t
+        offset = self.beta * neg_over_t_ratio #- B / t
     
         coeff = self.beta * (i)**(self.beta - 1) / (self.steps - i)**self.beta 
         log_denoiser_anneal = (log_mu)*self.beta 
@@ -227,6 +231,8 @@ class RewardSampler(SMCSampler):
         self.log_reward_func = log_reward_func
         self.anneal_schedule = lambda i: (i) / self.steps
 
+        self.sampling_strat = "rewardSMC"
+
     # proposal logits is [B*M, L, V]
     def get_log_weight_update(self, base_logits, r_logits, r_i, step):
         ###########################################
@@ -283,9 +289,9 @@ class RewardSampler(SMCSampler):
         B, L, V = logits.shape
         r_j = r_i.reshape((B, 1, 1)).repeat(1, L, V)  # [B, L, V]
 
-        print("B: ", B)
-        print("L: ", L)
-        print("V: ", V)
+        #print("B: ", B)
+        #print("L: ", L)
+        #print("V: ", V)
         
         # sample N vocab tokens, without replacement
         v_list = torch.randperm(V, device=logits.device)[:N]
@@ -439,7 +445,7 @@ class RewardSampler(SMCSampler):
 
     # batch size is the number of particles
     @torch.no_grad()
-    def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False):
+    def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False, log_wandb = False):
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
             self.length = x.shape[-1]
@@ -447,6 +453,20 @@ class RewardSampler(SMCSampler):
             if self.length is None:
                 raise ValueError("self.length is None and no init_seq provided. Either provide init_seq or initialize denoiser with a length attribute.")
             x = torch.full((batch_size, num_particles, self.length), self.mask_token, dtype=torch.long).to(self.denoiser.device)
+
+        if log_wandb:
+            utils.setup_wandb_run(project = "discrete_fkc", 
+                                  config = {"sampler": "RewardSMC", 
+                                    "denoiser_name": self.denoiser.name,
+                                    "reward": self.log_reward_func.name,
+                                   "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+                                   "steps": self.steps, 
+                                   "temperature": self.temperature, 
+                                   "cfg_scale": cfg_scale, 
+                                   "remasking": remasking, 
+                                   "sampling_strat": self.sampling_strat,
+                                   "batch_size": batch_size,
+                                   "num_particles": num_particles})
 
         # for resampling 
         log_weights = torch.zeros((batch_size, num_particles, 1), dtype=torch.float32).to(self.denoiser.device)
@@ -509,11 +529,16 @@ class RewardSampler(SMCSampler):
             #    transfer_index[j, select_index] = True
             #
             transfer_index = base_transfer_idx
+
+            x_pre_unmask = x.clone().view(batch_size, num_particles, self.length)
+
             x[transfer_index] = x0[transfer_index]
             
             if return_traj:
                 x_traj.append(x.clone())
 
+
+            x_pre_resample = x.view(batch_size, num_particles, self.length).clone()
 
             # update weights
             g_all_tok = self.get_log_weight_update(base_logits, r_logits, r_i, step = i)
@@ -546,6 +571,38 @@ class RewardSampler(SMCSampler):
             if return_traj:
                 ess_traj.append(ess_batch)
                 log_weights_traj.append(log_weights_norm)
+
+
+            if log_wandb:
+                utils.wandb_log_xt_smc(i, 
+                                       r_logits, 
+                                       x_pre_unmask, 
+                                       x_pre_resample,
+                                       x_r, 
+                                       x0,
+                                       self.tokenizer,
+                                       log_weights_norm, 
+                                       ess_batch,
+                                       self.log_prob_target,
+                                       self.mask_token,
+                                       show_logits = False)
+                wandb.log({"Mean Reward": r_i.mean().item(), "Reward STD": r_i.std().item()}, step=i)
+
+        if log_wandb:
+            # final log for wandb, to show all particles unmasked
+            utils.wandb_log_xt_smc(i+1, 
+                                   r_logits,
+                                   x_r,
+                                   x_r,
+                                   x_r,
+                                   x0,
+                                   self.tokenizer,
+                                   log_weights_r, # will be 0's, since after each resampling step, the log weights are set to 0
+                                   ess_batch,
+                                   self.log_prob_target,
+                                   self.mask_token,
+                                   show_logits = False)
+            wandb.log({"Mean Reward": r_i.mean().item(), "Reward STD": r_i.std().item()}, step=i+1)
 
         if return_traj:
             return x, x0_traj, x_traj, ess_traj, log_weights_traj

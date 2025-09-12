@@ -52,7 +52,7 @@ class ProductSampler(SMCSampler):
             utils.setup_wandb_run(project = "discrete_fkc", 
                                   config = {"sampler": "DualProdSMC", 
                                     "denoiser_name": self.denoiser.name,
-                                    "denoiser_2_name": self.denoiser2.name,
+                                    "denoiser_name_2": self.denoiser2.name,
                                    "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
                                    "steps": self.steps, 
                                    "temperature": self.temperature, 
@@ -199,11 +199,11 @@ class ProductPromptSampler(SMCSampler):
         super().__init__(denoiser, resample=resample, adaptive_resampling=adaptive_resampling, steps=steps, temperature=temperature)
 
         self.mask_token = mask_token
-        self.sampling_strat = "serial_product"
+        self.sampling_strat = "prompt_product"
 
     @torch.no_grad()
     def sample(self, prompt_list, steps=128, gen_length=128, block_length=128, temperature=0.,
-             cfg_scale=0., remasking='random', num_samples = 5, tokenizer=None, adaptive_resampling=False):
+             cfg_scale=0., remasking='random', num_samples = 5, tokenizer=None, adaptive_resampling=False, log_wandb = False):
         '''
         Args:
             model: Mask predictor.
@@ -239,6 +239,22 @@ class ProductPromptSampler(SMCSampler):
 
         assert num_blocks == 1 # for now, single block 
         
+
+        if log_wandb:
+            utils.setup_wandb_run(project = "discrete_fkc", 
+                                  config = {"sampler": "ProductPromptSMC", 
+                                   "denoiser_name": self.denoiser.name,
+                                   "start_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+                                   "steps": steps, 
+                                   "temperature": temperature, 
+                                   "cfg_scale": cfg_scale, 
+                                   "remasking": remasking, 
+                                   "sampling_strat": self.sampling_strat,
+                                   "batch_size": B,
+                                   "num_particles": num_samples,
+                                   "gen_length": gen_length,
+                                   "block_length": block_length})
+
         mask_index_samples = []
         logits_samples = []
         ess_list = []  # to track effective sample size
@@ -252,10 +268,13 @@ class ProductPromptSampler(SMCSampler):
 
                 x0 = []
                 
+                x_pre_unmask = smc_samples.clone()
+
                 if i == 0:  
                     mask_index_ans = (smc_samples == self.mask_token)
 
-                    # logits will be of size prompt_list.shape[1] + gen_length 
+                    # logits will be of length prompt_list.shape[1] + gen_length
+                    # batched along number of different prompts 
                     logits = self.denoiser(x)
                     prompt_logits = logits[:, prompt_list.shape[1]:] # b, l, vocab_size, only for the generated part
 
@@ -367,6 +386,7 @@ class ProductPromptSampler(SMCSampler):
                 ess = 1. / (weights ** 2).sum()
                 ess_list.append(ess.item())
 
+                x_pre_resample = smc_samples.clone()
 
                 if weights.shape[0] > 1:
                     if adaptive_resampling:
@@ -389,6 +409,34 @@ class ProductPromptSampler(SMCSampler):
                     smc_samples = smc_samples
 
                     log_weights = torch.zeros((num_samples, 1), dtype=torch.float32).to(self.device)
+
+                if log_wandb:
+                    utils.wandb_log_xt_smc(i, 
+                                           logits_samples, 
+                                           x_pre_unmask, 
+                                           x_pre_resample, 
+                                           smc_samples, 
+                                           x0s, 
+                                           tokenizer,
+                                           log_weights_norm, 
+                                           [ess.item() for _ in range(B)],
+                                           log_prob_target=None,
+                                           mask_token=self.mask_token,
+                                           show_logits=False)
+                    
+        if log_wandb:
+            utils.wandb_log_xt_smc(steps, 
+                                   logits_samples, 
+                                   smc_samples, 
+                                   smc_samples, 
+                                   smc_samples, 
+                                   x0s, 
+                                   tokenizer,
+                                   log_weights_norm, 
+                                   [ess.item() for _ in range(B)],
+                                   log_prob_target=None,
+                                   mask_token=self.mask_token,
+                                   show_logits=False)
 
         return x, smc_samples, ess_list 
 
