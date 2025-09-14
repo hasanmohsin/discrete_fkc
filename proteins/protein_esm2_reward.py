@@ -1,7 +1,3 @@
-from dplm.generate_dplm import initialize_generation
-from smc_sampler import RewardSampler
-from samplers import DiffusionSampler
-from dplm_denoiser import DPLMDenoiser
 import torch
 import torch.nn as nn
 import numpy as np
@@ -10,17 +6,22 @@ import sys
 from transformers import EsmForMaskedLM, AutoTokenizer
 import warnings
 
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from smc_sampler import RewardSampler
+from samplers import DiffusionSampler
+from dplm_denoiser import DPLMDenoiser
+
 # Suppress transformers warnings
 warnings.filterwarnings(
     'ignore', message='Some weights of the model checkpoint.*were not used when initializing.*')
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
-
+from dplm.generate_dplm import initialize_generation
 
 class ESM2ProteinReward():
     def __init__(self, tokenizer, device, beta=1.0,
@@ -56,6 +57,9 @@ class ESM2ProteinReward():
             # Shape: [seq_length + 2, vocab_size] (includes BOS/EOS)
             logits = outputs.logits[0]
             log_probs = torch.log_softmax(logits, dim=-1)
+
+            print("sequence: ", sequence)
+            print("log_probs shape: ", log_probs.shape)
 
             # Score each position in the sequence
             for pos in range(len(sequence)):
@@ -97,6 +101,26 @@ class ESM2ProteinReward():
         """
         return [self.score_sequence(seq) for seq in sequences]
 
+    def to_str(self, input_seq):
+        # Decode sequences from DPLM tokens to amino acid sequences
+        decoded_sequences = self.tokenizer.batch_decode(
+            input_seq, skip_special_tokens=True
+        )
+
+        # Clean sequences (remove spaces if any)
+        cleaned_sequences = ["".join(seq.split(" "))
+                             for seq in decoded_sequences]
+        
+        return cleaned_sequences
+
+    def __call__(self, input_seq):
+        # input_seq is [B, L] tensor of token ids from DPLM tokenizer
+        # Decode to amino acid sequences
+        sequences = self.to_str(input_seq)
+
+        # Score sequences
+        scores = self.score_sequences(sequences)
+        return torch.tensor(scores, dtype=torch.float32, device=self.device) * self.beta
 
 class ESM2ProteinRewardReference():
     def __init__(self, reference_sequence, tokenizer, device, beta=1.0,
@@ -242,56 +266,65 @@ def main():
     device = 'cuda'
     denoiser = DPLMDenoiser(device=device)
 
+    scratch_dir = os.getenv('SCRATCH')
+    hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
+
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
 
+    seq_length = 4
+    num_seqs = 2
+
     # Initialize without reference sequence
-    reward_model = ESM2ProteinReward(
+    reward_fn = ESM2ProteinReward(
         tokenizer=tokenizer,
+        beta = 100.0,  # Adjust this for reward scaling
+        hf_cache_dir=hf_cache_dir,
         device="cuda"
     )
 
     # Score a single sequence
     sequence = "MKLLVLSLVLVAPMAAQAAEITLVPSVKLQIGDRDNRGYYW"
-    score = reward_model.score_sequence(sequence)
+    score = reward_fn.score_sequence(sequence)
+    print(f"Score for sequence '{sequence}': {score}")
 
     # Define reference sequence (wildtype)
-    reference_sequence = "MSIQ"
-    reward_fn = ESM2ProteinRewardReference(
-        reference_sequence=reference_sequence,
-        tokenizer=tokenizer,
-        device=device,
-        beta=1.0  # Adjust this for reward scaling
-    )
+    #reference_sequence = "MSIQ"
+    #reward_fn = ESM2ProteinRewardReference(
+    #    reference_sequence=reference_sequence,
+    #    tokenizer=tokenizer,
+    #    device=device,
+    #    beta=1.0  # Adjust this for reward scaling
+    #)
 
-    target_string = "N"
+    #target_string = "N"
 
-    reward_fn = SubstringReward(target_string, tokenizer, device=device)
-    print("Target IDs: ", reward_fn.target_ids)
+    #reward_fn = SubstringReward(target_string, tokenizer, device=device)
+    #print("Target IDs: ", reward_fn.target_ids)
 
     input_seq = initialize_generation(
-        length=100,
-        num_seqs=10,
+        length=seq_length,
+        num_seqs=num_seqs,
         tokenizer=denoiser.dplm.tokenizer,
         device=device
     )
 
-    sampler = DiffusionSampler(denoiser=denoiser, steps=100, temperature=1.0)
+    sampler = DiffusionSampler(denoiser=denoiser, steps=seq_length, temperature=1.0)
     r_sampler = RewardSampler(denoiser=denoiser,
                               log_reward_func=reward_fn,
                               resample=True,
                               adaptive_resampling=False,
-                              steps=100,
+                              steps=seq_length,
                               temperature=1.0)
     x, x0, x_traj = sampler.sample(
         input_seq, return_traj=True, remasking='low_conf_noisy')
 
     num_particles = 2
-    batch_num = 5
+    batch_num = 1
 
     input_seq_particles = input_seq.reshape(batch_num, num_particles, -1)
 
     x_r, x0_r, x_traj_r, ess_traj, log_weights_traj = r_sampler.sample(input_seq_particles, return_traj=True, remasking='low_conf_noisy',
-                                                                       batch_size=5, num_particles=2)
+                                                                       batch_size=batch_num, num_particles=num_particles)
 
     print("Unguided x: ", x)
     print("Guided x: ", x)
@@ -327,21 +360,21 @@ def main():
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(
-        saveto, f"unguided_iter_{100}_L_{100}.fasta"
+        saveto, f"unguided_iter_{seq_length}_L_{seq_length}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results):
-        fp_save.write(f">SEQUENCE_{100}_L={100}\n")
+        fp_save.write(f">SEQUENCE_{seq_length}_L={seq_length}\n")
         fp_save.write(f"{seq}\n")
     fp_save.close()
 
     # Save guided sequences
     saveto_name = os.path.join(
-        saveto, f"guided_iter_{100}_L_{100}.fasta"
+        saveto, f"guided_iter_{seq_length}_L_{seq_length}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results_guided):
-        fp_save.write(f">SEQUENCE_{100}_L={100}\n")
+        fp_save.write(f">SEQUENCE_{seq_length}_L={seq_length}\n")
         fp_save.write(f"{seq}\n")
     fp_save.close()
 
