@@ -23,6 +23,82 @@ sys.path.append(parent_dir)
 
 
 class ESM2ProteinReward():
+    def __init__(self, tokenizer, device, beta=1.0,
+                 model_name="esm2_t33_650M_UR50D", hf_cache_dir=None):
+        self.tokenizer = tokenizer  # DPLM tokenizer
+        self.beta = beta
+        self.device = device
+
+        self.name = "ESM2Reward_" + model_name
+
+        # Load ESM2 model and tokenizer
+        self.esm_model = EsmForMaskedLM.from_pretrained(
+            f"facebook/{model_name}", cache_dir=hf_cache_dir).to(device)
+        self.esm_tokenizer = AutoTokenizer.from_pretrained(
+            f"facebook/{model_name}", cache_dir=hf_cache_dir)
+        self.esm_model.eval()
+
+        print(f"Loaded ESM2 model: {model_name}")
+
+    def _score_sequence_esm2(self, sequence):
+        """
+        Score a protein sequence based on ESM2's likelihood predictions.
+        Uses the sequence itself as input to get position-specific probabilities.
+        """
+        # Tokenize the sequence for ESM2
+        inputs = self.esm_tokenizer(
+            sequence, return_tensors="pt").to(self.device)
+
+        scores = []
+
+        with torch.no_grad():
+            outputs = self.esm_model(**inputs)
+            # Shape: [seq_length + 2, vocab_size] (includes BOS/EOS)
+            logits = outputs.logits[0]
+            log_probs = torch.log_softmax(logits, dim=-1)
+
+            # Score each position in the sequence
+            for pos in range(len(sequence)):
+                seq_aa = sequence[pos]
+
+                # Position in tokenized sequence (add 1 for BOS token)
+                token_pos = pos + 1
+
+                # Get token ID for sequence amino acid
+                seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(seq_aa)
+
+                # Skip invalid amino acids
+                if seq_token_id is None:
+                    print(
+                        f"Warning: Invalid amino acid '{seq_aa}' at position {pos}")
+                    continue
+
+                # Get log probability for this amino acid at this position
+                score = log_probs[token_pos, seq_token_id].item()
+                scores.append(score)
+
+        # Return average score
+        if not scores:
+            return 0.0
+
+        return sum(scores) / len(scores)
+
+    def score_sequence(self, sequence):
+        """
+        Public method to score a protein sequence.
+        Returns the average log-likelihood of the sequence under ESM2.
+        """
+        return self._score_sequence_esm2(sequence)
+
+    def score_sequences(self, sequences):
+        """
+        Score multiple protein sequences.
+        Returns a list of scores in the same order as input sequences.
+        """
+        return [self.score_sequence(seq) for seq in sequences]
+
+
+class ESM2ProteinRewardReference():
     def __init__(self, reference_sequence, tokenizer, device, beta=1.0,
                  model_name="esm2_t33_650M_UR50D", hf_cache_dir=None):
         self.reference_sequence = reference_sequence
@@ -31,7 +107,6 @@ class ESM2ProteinReward():
         self.device = device
 
         self.name = "ESM2Reward_" + model_name
-        
 
         # Load ESM2 model and tokenizer
         self.esm_model = EsmForMaskedLM.from_pretrained(
@@ -169,9 +244,19 @@ def main():
 
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
 
+    # Initialize without reference sequence
+    reward_model = ESM2ProteinReward(
+        tokenizer=tokenizer,
+        device="cuda"
+    )
+
+    # Score a single sequence
+    sequence = "MKLLVLSLVLVAPMAAQAAEITLVPSVKLQIGDRDNRGYYW"
+    score = reward_model.score_sequence(sequence)
+
     # Define reference sequence (wildtype)
     reference_sequence = "MSIQ"
-    reward_fn = ESM2ProteinReward(
+    reward_fn = ESM2ProteinRewardReference(
         reference_sequence=reference_sequence,
         tokenizer=tokenizer,
         device=device,
