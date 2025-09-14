@@ -46,45 +46,55 @@ class ESM2ProteinReward():
         Score a protein sequence based on ESM2's likelihood predictions.
         Uses the sequence itself as input to get position-specific probabilities.
         """
-        # Tokenize the sequence for ESM2
+        # Clean sequence - remove special tokens and invalid characters
+        # Keep only valid amino acids
+        valid_aas = set('ACDEFGHIKLMNPQRSTVWY')
+        cleaned_sequence = ''.join([aa for aa in sequence if aa in valid_aas])
+        
+        if not cleaned_sequence:
+            print(f"Warning: No valid amino acids found in sequence '{sequence}'")
+            return 0.0
+        
+        # Tokenize the cleaned sequence for ESM2
         inputs = self.esm_tokenizer(
-            sequence, return_tensors="pt").to(self.device)
-
+            cleaned_sequence, return_tensors="pt").to(self.device)
+        
         scores = []
-
+        
         with torch.no_grad():
             outputs = self.esm_model(**inputs)
             # Shape: [seq_length + 2, vocab_size] (includes BOS/EOS)
             logits = outputs.logits[0]
             log_probs = torch.log_softmax(logits, dim=-1)
-
-            print("sequence: ", sequence)
-            print("log_probs shape: ", log_probs.shape)
-
-            # Score each position in the sequence
-            for pos in range(len(sequence)):
-                seq_aa = sequence[pos]
-
+            
+            # Score each position in the cleaned sequence
+            for pos in range(len(cleaned_sequence)):
+                seq_aa = cleaned_sequence[pos]
+                
                 # Position in tokenized sequence (add 1 for BOS token)
                 token_pos = pos + 1
-
+                
+                # Ensure we don't go out of bounds
+                if token_pos >= logits.shape[0]:
+                    print(f"Warning: token_pos {token_pos} out of bounds for sequence length {logits.shape[0]}")
+                    continue
+                
                 # Get token ID for sequence amino acid
                 seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(seq_aa)
-
-                # Skip invalid amino acids
+                
+                # Skip invalid amino acids (shouldn't happen after cleaning, but just in case)
                 if seq_token_id is None:
-                    print(
-                        f"Warning: Invalid amino acid '{seq_aa}' at position {pos}")
+                    print(f"Warning: Invalid amino acid '{seq_aa}' at position {pos}")
                     continue
-
+                
                 # Get log probability for this amino acid at this position
                 score = log_probs[token_pos, seq_token_id].item()
                 scores.append(score)
-
+        
         # Return average score
         if not scores:
             return 0.0
-
+        
         return sum(scores) / len(scores)
 
     def score_sequence(self, sequence):
@@ -101,7 +111,13 @@ class ESM2ProteinReward():
         """
         return [self.score_sequence(seq) for seq in sequences]
 
-    def to_str(self, input_seq):
+    def __call__(self, input_seq):
+        """
+        Make the class callable for use with RewardSampler.
+        """
+        batch_size = input_seq.shape[0]
+        log_rewards = []
+
         # Decode sequences from DPLM tokens to amino acid sequences
         decoded_sequences = self.tokenizer.batch_decode(
             input_seq, skip_special_tokens=True
@@ -110,18 +126,24 @@ class ESM2ProteinReward():
         # Clean sequences (remove spaces if any)
         cleaned_sequences = ["".join(seq.split(" "))
                              for seq in decoded_sequences]
+
+        # Score each sequence
+        for seq in cleaned_sequences:
+            try:
+                score = self._score_sequence_esm2(seq)
+                # Apply temperature scaling
+                reward = self.beta * score
+                log_rewards.append(reward)
+            except Exception as e:
+                print(f"Error scoring sequence '{seq}': {e}")
+                log_rewards.append(0.0)  # Fallback score
+
+        # Convert to tensor and ensure same device as input
+        log_rewards = torch.tensor(
+            log_rewards, dtype=torch.float32, device=self.device)
+
+        return log_rewards
         
-        return cleaned_sequences
-
-    def __call__(self, input_seq):
-        # input_seq is [B, L] tensor of token ids from DPLM tokenizer
-        # Decode to amino acid sequences
-        sequences = self.to_str(input_seq)
-
-        # Score sequences
-        scores = self.score_sequences(sequences)
-        return torch.tensor(scores, dtype=torch.float32, device=self.device) * self.beta
-
 class ESM2ProteinRewardReference():
     def __init__(self, reference_sequence, tokenizer, device, beta=1.0,
                  model_name="esm2_t33_650M_UR50D", hf_cache_dir=None):
