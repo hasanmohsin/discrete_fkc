@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from smc_sampler import RewardSampler
 from samplers import DiffusionSampler
 from dplm_denoiser import DPLMDenoiser
+from utils import set_all_seeds
 
 # Suppress transformers warnings
 warnings.filterwarnings(
@@ -30,7 +31,9 @@ class ESM2ProteinReward():
         self.beta = beta
         self.device = device
 
-        self.name = "ESM2Reward_" + model_name
+        self.invalid_seq_score = -10.0  # Score for invalid sequences
+
+        self.name = "ESM2Reward_Uncond_" + model_name
 
         # Load ESM2 model and tokenizer
         self.esm_model = EsmForMaskedLM.from_pretrained(
@@ -136,7 +139,7 @@ class ESM2ProteinReward():
                 log_rewards.append(reward)
             except Exception as e:
                 print(f"Error scoring sequence '{seq}': {e}")
-                log_rewards.append(0.0)  # Fallback score
+                log_rewards.append(self.beta * self.invalid_seq_score)  # Fallback score
 
         # Convert to tensor and ensure same device as input
         log_rewards = torch.tensor(
@@ -152,7 +155,7 @@ class ESM2ProteinRewardReference():
         self.beta = beta
         self.device = device
 
-        self.name = "ESM2Reward_" + model_name
+        self.name = "ESM2Reward_Reference_" + model_name
 
         # Load ESM2 model and tokenizer
         self.esm_model = EsmForMaskedLM.from_pretrained(
@@ -287,19 +290,22 @@ class BetaSheetReward():
 def main():
     device = 'cuda'
     denoiser = DPLMDenoiser(device=device)
+    seed = 3315
+
+    set_all_seeds(seed)
 
     scratch_dir = os.getenv('SCRATCH')
     hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
 
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
 
-    seq_length = 4
-    num_seqs = 2
+    seq_length = 50
+    num_seqs = 5
 
     # Initialize without reference sequence
     reward_fn = ESM2ProteinReward(
         tokenizer=tokenizer,
-        beta = 100.0,  # Adjust this for reward scaling
+        beta = 20.0,  # Adjust this for reward scaling
         hf_cache_dir=hf_cache_dir,
         device="cuda"
     )
@@ -337,19 +343,29 @@ def main():
                               adaptive_resampling=False,
                               steps=seq_length,
                               temperature=1.0)
+    
+    set_all_seeds(seed)
     x, x0, x_traj = sampler.sample(
-        input_seq, return_traj=True, remasking='low_conf_noisy')
+        input_seq, batch_size = 5, return_traj=True, remasking='low_conf_noisy', log_wandb=False)
 
-    num_particles = 2
+    num_particles = 1
     batch_num = 1
 
-    input_seq_particles = input_seq.reshape(batch_num, num_particles, -1)
+    input_seq_2 = initialize_generation(
+        length=seq_length,
+        num_seqs=batch_num * num_particles,
+        tokenizer=denoiser.dplm.tokenizer,
+        device=device
+    )
 
+    input_seq_particles = input_seq_2.reshape(batch_num, num_particles, -1)
+    
+    set_all_seeds(seed)
     x_r, x0_r, x_traj_r, ess_traj, log_weights_traj = r_sampler.sample(input_seq_particles, return_traj=True, remasking='low_conf_noisy',
-                                                                       batch_size=batch_num, num_particles=num_particles)
+                                                                       batch_size=batch_num, num_particles=num_particles, log_wandb=False)
 
     print("Unguided x: ", x)
-    print("Guided x: ", x)
+    print("Guided x: ", x_r.view(-1, x_r.shape[-1]))
 
     # Compute the reward
     reward = reward_fn(x)
@@ -378,11 +394,11 @@ def main():
     ]
     print("Guided Results: ", output_results_guided)
 
-    saveto = "./dplm_out/reward_guided"
+    saveto = "./dplm_out/reward_guided_esm2_uncond"
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(
-        saveto, f"unguided_iter_{seq_length}_L_{seq_length}.fasta"
+        saveto, f"unguided_iter_{seq_length}_L_{seq_length}_beta_{reward_fn.beta}_seed_{seed}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results):
@@ -392,7 +408,7 @@ def main():
 
     # Save guided sequences
     saveto_name = os.path.join(
-        saveto, f"guided_iter_{seq_length}_L_{seq_length}.fasta"
+        saveto, f"guided_iter_{seq_length}_L_{seq_length}_beta_{reward_fn.beta}_seed_{seed}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results_guided):

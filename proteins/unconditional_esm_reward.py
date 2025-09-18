@@ -63,7 +63,7 @@ def main(args):
         input_seq, batch_size = num_seqs, return_traj=True, remasking='low_conf_noisy', log_wandb=False)
 
     num_particles = args.num_particles  #5
-    batch_num = 1
+    batch_num = args.batch_num 
 
     input_seq_2 = initialize_generation(
         length=seq_length,
@@ -112,7 +112,7 @@ def main(args):
     ]
     print("Guided Results: ", output_results_guided)
 
-    saveto = "./dplm_out/reward_guided_esm2_uncond_true"
+    saveto = "./dplm_out/reward_guided_esm2_uncond_true_mult_samples"
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(
@@ -142,6 +142,7 @@ def parse_args():
     parser.add_argument("--num_particles", type=int, default=5, help="Number of particles")
     parser.add_argument("--num_seqs", type=int, default=5, help="Number of sequences to generate")
     parser.add_argument("--beta", type=float, default=200.0, help="Reward scaling factor")
+    parser.add_argument("--batch_num", type=int, default=1, help="Number of batches for reward sampling")
     args = parser.parse_args()
     return args
 
