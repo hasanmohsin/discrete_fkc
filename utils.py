@@ -99,7 +99,26 @@ def plot_2d(x, title, step, log_prob_target = None):
 
     return wandb_im_x, wandb_tgt_im
 
-def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, tokenizer, log_weights_r, ess_batch, log_prob_target = None, mask_token = None, show_logits = None):
+def wandb_get_additional_metrics(metric_dict):
+    metrics = metric_dict.keys()
+
+    metric_arrays = []
+
+    for m in metrics:
+        if m == "reward":
+            # the dict should contain a list of reward values to log in this case 
+            reward_metric = metric_dict[m]
+            metric_arrays.append(reward_metric.cpu().numpy())
+
+        
+    return metric_arrays
+
+def wandb_log_xt_smc(step, logits_prop, 
+                     x_pre_unmask, x_pre_resample, x_r, x0, 
+                     tokenizer, 
+                     log_weights_r, ess_batch, 
+                     additional_metrics = None, # dictionary of additional metrics to log
+                     log_prob_target = None, mask_token = None, show_logits = None):
     batch_size, num_particles, length = x_r.shape  
 
     # flatten the particles for logging
@@ -112,6 +131,8 @@ def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, t
     x_pre_unmask = x_pre_unmask.view(batch_size * num_particles, length)
     x_pre_resample = x_pre_resample.view(batch_size * num_particles, length)
     x_r = x_r.view(batch_size * num_particles, length)
+    #x0 = x0.view(batch_size * num_particles, length)
+
     log_weights_r = log_weights_r.view(batch_size * num_particles)
 
     ess_batch = torch.tensor(ess_batch).reshape(batch_size, -1).expand(-1, num_particles).reshape(batch_size * num_particles)  # shape (batch_size * num_particles)
@@ -120,8 +141,12 @@ def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, t
     txt_x_pre_um = decode(x_pre_unmask, tokenizer)
     txt_x_pre_res = decode(x_pre_resample, tokenizer)
     txt_x = decode(x_r, tokenizer)
+
+    #print("x_r: ", x_r.shape)
+    #print("x0: ", x0.shape)
     txt_x0 = decode(x0, tokenizer)
     
+
     x_pre_um_np = x_pre_unmask.cpu().numpy()
     x_pre_resample_np = x_pre_resample.cpu().numpy()
     x_r_np = x_r.cpu().numpy()
@@ -133,7 +158,8 @@ def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, t
         
     else:
         avg_num_masked = None
-
+    
+    
     table_data = [[particle_group[i], 
                    np.array2string(x_pre_um_np[i]), 
                    np.array2string(x_pre_resample_np[i]), 
@@ -145,11 +171,28 @@ def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, t
                    txt_x_pre_res[i] if txt_x_pre_res is not None else None,
                    txt_x[i] if txt_x is not None else None,
                    txt_x0[i] if txt_x0 is not None else None] for i in range(x_pre_um_np.shape[0])]
-    table = wandb.Table(columns=['Particle Group', 'xt', 'xt pre resample', 'xt next (resampled)', 'x0_t', 'log weight', 'ESS', 'text xt', 'text x pre resample', 'text x next (resampled)', 'text x0'], data=table_data)
-
+    columns=['Particle Group', 'xt', 'xt pre resample', 'xt next (resampled)', 'x0_t', 
+                                 'log weight', 'ESS', 'text xt', 'text x pre resample', 'text x next (resampled)', 'text x0']
+                                 
+    table = wandb.Table(columns=['Particle Group', 'xt', 'xt pre resample', 'xt next (resampled)', 'x0_t', 
+                                 'log weight', 'ESS', 'text xt', 'text x pre resample', 'text x next (resampled)', 'text x0'], data=table_data)
+    
+    """
+    table_data = [[particle_group[i], 
+                   txt_x_pre_um[i] if txt_x_pre_um is not None else None, 
+                   txt_x_pre_res[i] if txt_x_pre_res is not None else None,
+                   txt_x[i] if txt_x is not None else None,
+                   txt_x0[i] if txt_x0 is not None else None] for i in range(x_pre_um_np.shape[0])]
+    table = wandb.Table(columns=['Particle Group', 'text xt', 'text x pre resample', 'text x next (resampled)', 'text x0'], data=table_data)
+    """                             
     if show_logits:
         logit_heatmap = get_logit_heatmap(logits_prop)
         table.add_column("Logits", logit_heatmap)
+
+    if additional_metrics:
+        metric_arrays = wandb_get_additional_metrics(additional_metrics)
+        for i, m in enumerate(additional_metrics.keys()):
+            table.add_column(m, metric_arrays[i])
 
     log_info = {"step": step,
                 "num masked": avg_num_masked,
@@ -171,11 +214,11 @@ def wandb_log_xt_smc(step, logits_prop, x_pre_unmask, x_pre_resample, x_r, x0, t
         if wandb_tgt_im is not None:
             log_info["Target Log Prob"] = wandb_tgt_im
 
-    wandb.log(log_info, step=step)
-    return 
+    #wandb.log(log_info, step=step)
+    return log_info 
 
 # show_logits = True displays logits heatmap 
-def wandb_log_xt(step, logits, x, x0, tokenizer, log_prob_target =None, mask_token = None, show_logits = False):
+def wandb_log_xt(step, logits, x, x0, tokenizer, log_prob_target =None, mask_token = None, additional_metrics=False, show_logits = False):
     txt_x = decode(x, tokenizer)
     txt_x0 = decode(x0, tokenizer)
 
@@ -198,6 +241,10 @@ def wandb_log_xt(step, logits, x, x0, tokenizer, log_prob_target =None, mask_tok
         logit_heatmap = get_logit_heatmap(logits)
         table.add_column("Logits", logit_heatmap)
 
+    if additional_metrics:
+        metric_arrays = wandb_get_additional_metrics(additional_metrics)
+        for i, m in enumerate(additional_metrics.keys()):
+            table.add_column(m, metric_arrays[i])
 
     log_info = {"step": step,
                 "num masked": avg_num_masked,
@@ -214,8 +261,8 @@ def wandb_log_xt(step, logits, x, x0, tokenizer, log_prob_target =None, mask_tok
         if wandb_tgt_im is not None:
             log_info["Target Log Prob"] = wandb_tgt_im
 
-    wandb.log(log_info, step=step)
-    return 
+    #wandb.log(log_info, step=step)
+    return log_info 
 
 
 def save_samples_to_file(x, tokenizer, filename):
