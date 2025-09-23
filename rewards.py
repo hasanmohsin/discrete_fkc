@@ -26,6 +26,79 @@ class DiagRewardFunction():
         self.side_length = side_length
         self.dimensionality = dimensionality
         self.device = device
+        self.name = "DiagRewardFunction"
+
+        if dimensionality == 2 and side_length == 4:
+            self.log_r_table = torch.tensor(
+                [[-5.0, -5.0, -5.0, -5.0],
+                 [-5.0,  -5.0, -5.0, -0.0],
+                 [-0.0, -0.0,  0.0, -5.0],
+                 [-5.0, -5.0, -5.0, -5.0]], device=self.device
+            )
+
+    def reward(self, samples: torch.Tensor) -> torch.Tensor:
+        return self.__call__(samples).exp()
+
+    def get_log_reward_table(self):
+        reward_arr = torch.zeros((self.side_length, self.side_length), device=self.device)
+        for indices in np.ndindex(reward_arr.shape):
+            r_val = self(torch.tensor(list(indices)).unsqueeze(0).to(self.device))
+            reward_arr[indices] = r_val 
+        return reward_arr
+
+
+    # returns log reward
+    # assumes input of shape (batch_size, 2)
+    def __call__(self, samples: torch.Tensor) -> torch.Tensor:
+        # Get index of one-hot
+        if (samples == self.mask_token_idx).any():
+            raise ValueError(
+                "Evaluating the reward of a masked state which is not possible"
+            )
+        if samples.ndim != 2:
+            raise ValueError(
+                "Expected input of shape (batch_size, 2)"
+            )
+
+        if self.dimensionality == 2 and self.side_length == 4:
+            #print("Querying table")
+            return self.log_r_table[samples[:,0], samples[:,1]]
+
+        else:
+            prop = (samples + 1) / self.side_length
+
+            rewards = torch.full((prop.shape[0],), -5.0, device=self.device)  # Initialize rewards tensor
+
+            #cond = (prop[..., 0] < 0.5) & (prop[..., 1] < 0.5)
+
+            cond = (prop[..., 0] + prop[..., 1] >= 0.8) & (prop[..., 0] + prop[..., 1] <= 1.2) 
+    
+            # make reward high for everything in the bottom left quadrant
+            rewards[cond] = torch.tensor(0.0).to(self.device)
+
+
+        return rewards  
+class Reward_2D_Function():
+    def __init__(
+        self,
+        side_length: int,
+        dimensionality: int,
+        device: str
+    ):
+        self.mask_token_idx = side_length 
+        
+        self.side_length = side_length
+        self.dimensionality = dimensionality
+        self.device = device
+
+        self.name = "Reward_2D_Function"
+
+    def get_log_reward_table(self):
+        reward_arr = torch.zeros((self.side_length, self.side_length), device=self.device)
+        for indices in np.ndindex(reward_arr.shape):
+            r_val = self(torch.tensor(list(indices)).unsqueeze(0).to(self.device))
+            reward_arr[indices] = r_val 
+        return reward_arr
 
     def reward(self, samples: torch.Tensor) -> torch.Tensor:
         return self.__call__(samples).exp()
@@ -47,15 +120,17 @@ class DiagRewardFunction():
 
         rewards = torch.full((prop.shape[0],), -10.0, device=self.device)  # Initialize rewards tensor
 
-        #cond = (prop[..., 0] < 0.5) & (prop[..., 1] < 0.5)
+        cond = (prop[..., 0] < 0.5) & (prop[..., 1] < 0.5)
 
-        cond = prop[..., 0] + prop[..., 1] < 1.0 
-    
+        # for even sums high reward, otherwise low reward
+        #cond = (prop[..., 0] + prop[..., 1]) % 2 == 0
+
         # make reward high for everything in the bottom left quadrant
         rewards[cond] = torch.tensor(0.0).to(self.device)
+        rewards[~cond] = torch.tensor(-5.0).to(self.device)
 
         return rewards  
-    
+
 def main():
     logprob = MogGridEnergyFunction(side_length = 128, dimensionality=2, device='cuda')
     reward = DiagRewardFunction(side_length=128, dimensionality=2, device='cuda')

@@ -7,6 +7,8 @@ import random
 from datetime import datetime 
 import wandb 
 
+import scipy 
+
 import torch.nn.functional as F
 
 import utils 
@@ -25,10 +27,17 @@ class SMCSampler(DiffusionSampler):
     def resample_op(self, log_weights, x, num_particles, i):
         weights = log_weights.exp()
 
-        ess = 1. / (weights ** 2).sum()
-        
+        # renormalize in case of numerical errors
+        weights = weights/weights.sum()
 
-        if num_particles > 1 and self.resample:
+        ess = 1. / (weights ** 2).sum()
+
+        if hasattr(self, 'cut_off_resample'):
+            cut_off_idx = self.cut_off_resample
+        else:
+            cut_off_idx = self.steps + 100    
+
+        if num_particles > 1 and self.resample and (i < cut_off_idx):
             if self.adaptive_resampling:
                 if ess < num_particles / 2 or i == self.steps - 1:
                     # resample if ESS is low or at the last step
@@ -56,7 +65,7 @@ class AnnealSampler(SMCSampler):
         self.sampling_strat = 'annealSMC'
 
     # proposal logits is [B*M, L, V]
-    def get_log_weight_update(self, base_logits, i):
+    def get_log_weight_update_old(self, base_logits, i):
         ###########################################
         # log weights for resampling 
         
@@ -72,6 +81,105 @@ class AnnealSampler(SMCSampler):
         coeff = self.beta * (i)**(self.beta - 1) / (self.steps - i)**self.beta 
         log_denoiser_anneal = (log_mu)*self.beta 
         score_anneal_sum = (coeff * log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
+
+        # get a number per token 
+        g_all_tok = score_anneal_sum + offset  # b, l 
+        
+        return g_all_tok
+
+    def time_integral_weight_update(self, base_logits, i):
+        ###########################################
+        # log weights for resampling 
+        ###########################################
+        # log weights for resampling 
+        
+        log_mu = base_logits.log_softmax(dim=-1)
+
+        # t=0 corresponds to fully unmasked, and t=1 to fully masked
+        t = 1 - torch.tensor(i/self.steps)
+
+        alpha_t = self.get_alpha_t(i)
+        neg_over_t_ratio = self.get_elbo_weight(i) #-1/t
+        offset = self.beta * neg_over_t_ratio #- B / t 
+
+        coeff = self.beta * (self.steps * (i)**(self.beta - 1) / (self.steps - i)**self.beta) 
+
+        coeff = self.integrated_coeff(i)
+
+        log_denoiser_anneal = (log_mu)*self.beta 
+        score_anneal_sum = coeff * (log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
+
+        # get a number per token 
+        g_all_tok = score_anneal_sum + offset  # b, l 
+        
+        return g_all_tok
+
+    def integrated_coeff(self, i):
+        # integrate from t_i to t_{i+1} 
+        # eg. for i = 0, integrate from 0 to 1/steps
+        t_higher = 1 - torch.tensor((i)/self.steps) # since we integrate backwards, this is the startpoint 
+        t_lower = 1 - torch.tensor((i+1)/self.steps) # endpoint
+
+        # clamp become becoming 0
+        t_lower = torch.clamp(t_lower, min = 1/(2*self.steps))
+
+        def integrand(t):
+            return self.beta* (1 - t)**(self.beta - 1) / t**self.beta
+ 
+        n_points = 100
+        t_points = torch.linspace(t_lower, t_higher, n_points)
+
+        # integrate using trapezoidal rule
+        coeff = torch.trapz(integrand(t_points), t_points)
+
+        coeff = coeff.clamp(max=50.)
+
+        return coeff
+
+        #coeff_h = self.beta * t_higher**(1-self.beta) / (1 - self.beta) 
+        #coeff_l = self.beta * t_lower**(1-self.beta) / (1 - self.beta)
+
+
+        # evaluate hypergeometric function 
+        #hyp_2f1_h = scipy.special.hyp2f1(1-self.beta, 
+        #                                 1-self.beta,
+        #                                 2 - self.beta,
+        #                                 t_higher)
+        #hyp_2f1_l = scipy.special.hyp2f1(1-self.beta, 
+        ##                                 1-self.beta,
+        #                                 2 - self.beta,
+        #                                 t_lower)
+        
+        #coeff = coeff_h * hyp_2f1_h - coeff_l * hyp_2f1_l
+
+        #return coeff 
+
+    # proposal logits is [B*M, L, V]
+    def get_log_weight_update(self, base_logits, i, integrate=False):
+        ###########################################
+        # log weights for resampling 
+        
+        log_mu = base_logits.log_softmax(dim=-1)
+
+        # t=0 corresponds to fully unmasked, and t=1 to fully masked
+        t = 1 - torch.tensor(i/self.steps)
+
+        alpha_t = self.get_alpha_t(i)
+        neg_over_t_ratio = self.get_elbo_weight(i) #-1/t
+        offset = self.beta * neg_over_t_ratio #- B / t 
+
+        coeff = self.beta * (self.steps * (i)**(self.beta - 1) / (self.steps - i)**self.beta) 
+
+        if integrate:
+           #print("Would be coeff step {}: ".format(i), coeff)
+           coeff = self.integrated_coeff(i)
+           #100*coeff # to avoid very small coeff at last step for small number of steps
+           #print("\n\nLarge coeff at final step to avoid numerical issues for small number of steps")
+
+        print("Coeff at step {}: ".format(i), coeff)
+
+        log_denoiser_anneal = (log_mu)*self.beta 
+        score_anneal_sum = coeff * (log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
 
         # get a number per token 
         g_all_tok = score_anneal_sum + offset  # b, l 
@@ -163,9 +271,15 @@ class AnnealSampler(SMCSampler):
 
 
             # update weights
-            g_all_tok = self.get_log_weight_update(base_logits, i)
+            integrate = self.steps < 10
+            g_all_tok = self.get_log_weight_update(base_logits, i, integrate=integrate)
             g = g_all_tok[transfer_index]
-            log_weights = log_weights + g.unsqueeze(-1) * num_transfer_tokens[:, i].unsqueeze(-1) / self.steps # num_samples, 1
+
+            if not integrate:
+                dt = num_transfer_tokens[:, i].unsqueeze(-1) / self.steps
+                log_weights = log_weights + g.unsqueeze(-1) * dt  # num_samples, 1
+            else:
+                log_weights = log_weights + g.unsqueeze(-1)  # num_samples, 1 (already accounts for dt)
 
             # for numerical stability
             #log_weights = log_weights - log_weights.max(dim=0, keepdim=True).values
@@ -179,7 +293,8 @@ class AnnealSampler(SMCSampler):
             # resample (weights may be set to 0 after resampling)
             ess_batch = []
             for b in range(batch_size):
-
+                #print("\nstep: {}, batch: {}".format(i, b))
+                #print("log weights before resampling: ", log_weights_norm[b].squeeze(-1).cpu().numpy())
                 x_r[b], log_weights_r[b], ess_b = self.resample_op(log_weights_norm[b], x_r[b], num_particles = num_particles, i = i)
                 ess_batch.append(ess_b.item())
 
@@ -187,17 +302,18 @@ class AnnealSampler(SMCSampler):
             log_weights = log_weights_r.view(batch_size * num_particles, 1)
 
             if log_wandb:
-                log_info = utils.wandb_log_xt_smc(i, 
-                                       logits, 
-                                       x_pre_unmask, 
-                                       x_pre_resample,
-                                       x_r, 
-                                       x0,
-                                       self.tokenizer,
-                                       log_weights_norm, 
-                                       ess_batch,
-                                       self.log_prob_target,
-                                       self.mask_token,
+                log_info = utils.wandb_log_xt_smc(step = i, 
+                                       logits_prop = logits, 
+                                       x_pre_unmask = x_pre_unmask,
+                                       x_pre_resample = x_pre_resample,
+                                       x_r = x_r,
+                                       x0 = x0,
+                                       tokenizer = self.tokenizer,
+                                       log_weights_r = log_weights_norm,
+                                       ess_batch = ess_batch,
+                                       additional_metrics=None,
+                                       log_prob_target = self.log_prob_target,
+                                       mask_token = self.mask_token,
                                        show_logits = False)
                 wandb.log(log_info, step=i)
 
@@ -207,17 +323,19 @@ class AnnealSampler(SMCSampler):
 
         # final log for wandb, to show all particles unmasked
         if log_wandb:
-            log_info = utils.wandb_log_xt_smc(i+1, 
-                                   logits,
-                                   x_r,
-                                   x_r,
-                                   x_r,
-                                   x0,
-                                   self.tokenizer,
-                                   log_weights_r, # will be 0's, since after each resampling step, the log weights are set to 0
-                                   ess_batch,
-                                   self.log_prob_target,
-                                   self.mask_token,
+            log_info = utils.wandb_log_xt_smc(
+                                    step = i+1, 
+                                    logits_prop = logits,
+                                    x_pre_unmask = x_r,
+                                    x_pre_resample = x_r,
+                                    x_r = x_r,
+                                    x0 = x0,
+                                    tokenizer = self.tokenizer,
+                                   log_weights_r = log_weights_r, # will be 0's, since after each resampling step, the log weights are set to 0
+                                   ess_batch = ess_batch,
+                                   additional_metrics=None,
+                                   log_prob_target = self.log_prob_target,
+                                   mask_token = self.mask_token,
                                    show_logits = False)
             wandb.log(log_info, step=i+1)
 
@@ -230,10 +348,13 @@ class AnnealSampler(SMCSampler):
     
     
 class RewardSampler(SMCSampler):
-    def __init__(self, denoiser, log_reward_func, resample = True, adaptive_resampling = False, steps=10, temperature=1.0):
+    def __init__(self, denoiser, log_reward_func, resample = True, adaptive_resampling = False, steps=10, temperature=1.0, partial_cont = False):
         super().__init__(denoiser, resample, adaptive_resampling, steps, temperature)
         self.log_reward_func = log_reward_func
         self.anneal_schedule = lambda i: (i) / self.steps
+
+        # when starting with partially masked sequence, start count at len - number of unmasked_tokens
+        self.partial_cont = partial_cont
 
         self.sampling_strat = "rewardSMC"
 
@@ -273,70 +394,7 @@ class RewardSampler(SMCSampler):
 
         return g_all_tok
 
-    # evaluate ratio exp( beta * reward(j))/exp( beta * reward(i)), with i = x, j = all Hamming 1 neighbours of x
-    # logits are of shape [B, L, V]
-    def eval_logr_diffs_unif(self, x, logits, step):
-        N = 20
-        
-        logits = logits.log_softmax(dim=-1)
-        
-        # shape [B, ]
-        x0_i = self.mask_fill_strat(x)  # [B, L]
-        r_i = self.log_reward_func(x0_i)
-
-        # there are M*V neighbours, where M = number of masked tokens, V = vocab size
-        masked_idx = (x == self.mask_token)
-        num_masked = masked_idx.sum(dim=-1) #[B,] - number of masked for each sample in batch
-
-        r_tilted_logits = torch.clone(logits)
-
-        B, L, V = logits.shape
-        r_j = r_i.reshape((B, 1, 1)).repeat(1, L, V)  # [B, L, V]
-
-        #print("B: ", B)
-        #print("L: ", L)
-        #print("V: ", V)
-        
-        # sample N vocab tokens, without replacement
-        v_list = torch.randperm(V, device=logits.device)[:N]
-
-        for l in range(L):
-            # if masked, change to v for all in batch
-            masked = (x[:, l] == self.mask_token)
-
-            for v in range(V):
-                
-                if v in v_list:
-                    #if masked: 
-                    x_neighbour = x.clone()
-
-                    #print("x neighbour size: ", x_neighbour.shape)
-
-                
-                    x_neighbour[masked, l] = v
-
-                    x0_n = self.mask_fill_strat(x_neighbour)  # [1, L, V]
-
-                    r_j[:, l, v] = self.log_reward_func(x0_n) # should be equal to r_i at ~masked_in_batch positions
-                    #else:
-                    #    r_j[b, l, v] = r_i[b]  # if not masked, reward is same as r_i
-                else:
-                    r_j[:, l, v] = r_i
-
-                r_tilted_logits[:, l, v] = logits[:, l, v] + self.anneal_schedule(step) * (r_j[:, l, v] - r_i)
-
-                
-
-
-        print("r_tilted_logits shape: ", r_tilted_logits.shape)
-        print("r_i shape: ", r_i.shape)
-        print("r_j shape: ", r_j.shape)
-        #r_tilted_logits = logits 
-        #r_i = torch.tensor(0.) .to(self.denoiser.device)
-        #r_j = torch.zeros((B,L,V)).to(self.denoiser.device)
-
-        return r_tilted_logits, r_j, r_i
-
+   
     # evaluate ratio exp( beta * reward(j))/exp( beta * reward(i)), with i = x, j = all Hamming 1 neighbours of x
     # logits are of shape [B, L, V]
     # select_idx is the list of indices that will be unmasked this step (based on base_logits)
@@ -458,6 +516,16 @@ class RewardSampler(SMCSampler):
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
             self.length = x.shape[-1]
+
+            if self.partial_cont:
+                # assuming same number of unmasked tokens in each sequence in the batch
+                num_masked = (x == self.mask_token).sum(dim=-1)[0].item()
+                anneal_start_val = (self.length - 1) - num_masked
+                print("Starting reward annealing schedule at step: ", anneal_start_val)
+                self.anneal_schedule = lambda i: (i + anneal_start_val) / self.steps
+            else:
+                anneal_start_val = 0
+
         else:
             if self.length is None:
                 raise ValueError("self.length is None and no init_seq provided. Either provide init_seq or initialize denoiser with a length attribute.")
@@ -481,7 +549,9 @@ class RewardSampler(SMCSampler):
                                    "remasking": remasking, 
                                    "sampling_strat": self.sampling_strat,
                                    "batch_size": batch_size,
-                                   "num_particles": num_particles})
+                                   "num_particles": num_particles,
+                                   "anneal_start_val": anneal_start_val,
+                                   "partial_cont": self.partial_cont})
 
         # for resampling 
         log_weights = torch.zeros((batch_size, num_particles, 1), dtype=torch.float32).to(self.denoiser.device)
