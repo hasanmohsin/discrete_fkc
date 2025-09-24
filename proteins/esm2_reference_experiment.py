@@ -80,6 +80,14 @@ def main(args):
     denoiser = DPLMDenoiser(device=device)
     seed = args.seed
 
+    mask_num = args.mask_num  # 5 or 10
+
+    assert mask_num in [5, 10, 15], "mask_num should be either 5 or 10"
+
+    partial_cont = args.partial_cont
+    clamp_val = args.clamp_val 
+    recent_r_i = args.recent_r_i    
+
     set_all_seeds(seed)
 
     scratch_dir = os.getenv('SCRATCH')
@@ -89,9 +97,17 @@ def main(args):
 
     # Reference sequence and mask specification
     reference_seq = "SFNTVDEWLEAIKMGQYKESFANAGFTSFDVVSQMMMEDILRVGVTLAGHQKKILNSIQVMRAQM"
-    mask_string = "SFNTVDEWLE<MASK>IKMGQYKESF<MASK>N<MASK>GFTSFDVVSQMMMEDILRVGVTL<MASK>GHQKKILNSIQVMR<MASK>QM"
     
-    seq_length = len(reference_seq)
+    if mask_num == 5:
+        mask_string = "SFNTVDEWLE<MASK>IKMGQYKESF<MASK>N<MASK>GFTSFDVVSQMMMEDILRVGVTL<MASK>GHQKKILNSIQVMR<MASK>QM"
+    elif mask_num == 10:
+        mask_string = "SFNTV<MASK>EWL<MASK><MASK>IKMGQYK<MASK>SF<MASK>N<MASK>GFTSF<MASK>VVSQMMME<MASK>ILRVGVTL<MASK>GHQKKILNSIQVMR<MASK>QM"
+    elif mask_num == 15:
+        mask_string = "S<MASK><MASK>TV<MASK>EW<MASK><MASK><MASK>IKM<MASK><MASK>YK<MASK>SF<MASK>N<MASK><MASK>FTSF<MASK>VVSQMMME<MASK>ILRVGVTL<MASK>GHQKKILNSIQVMR<MASK>QM"
+    else:
+        raise ValueError("mask_num should be either 5, 10 or 15")
+
+    seq_length = len(reference_seq) #+ 2  # +2 for BOS and EOS tokens
     num_seqs = args.num_seqs
     
     # Parse mask positions from the mask string
@@ -110,14 +126,18 @@ def main(args):
         device=device
     )
 
+
+    steps = len(mask_positions)
+
     # Create samplers
-    sampler = DiffusionSampler(denoiser=denoiser, steps=seq_length, temperature=1.0)
+    sampler = DiffusionSampler(denoiser=denoiser, steps=steps, temperature=1.0)
     r_sampler = RewardSampler(denoiser=denoiser,
                               log_reward_func=reward_fn,
                               resample=True,
                               adaptive_resampling=False,
-                              steps=seq_length,
-                              temperature=1.0)
+                              steps=steps,
+                              temperature=1.0,
+                              partial_cont = partial_cont)
 
     # Create masked input sequence for unguided sampling
     input_seq = create_masked_input_sequence(
@@ -133,7 +153,7 @@ def main(args):
 
     # Guided sampling setup
     num_particles = args.num_particles
-    batch_num = 1
+    batch_num = args.batch_num 
 
     # Create masked input for guided sampling
     input_seq_2 = create_masked_input_sequence(
@@ -148,7 +168,11 @@ def main(args):
                                                                        num_particles=num_particles,
                                                                        remasking='low_conf_noisy',
                                                                        return_traj=True, 
-                                                                       log_wandb=False)
+                                                                       log_wandb=False,
+                                                                       eos_bos = True,
+                                                                       sim_mask_fill = True,
+                                                                       clamp_val = clamp_val,
+                                                                       use_recent_r_i = recent_r_i)
 
     print("Unguided x: ", x)
     print("Guided x: ", x_r.view(-1, x_r.shape[-1]))
@@ -176,7 +200,7 @@ def main(args):
     print("Guided Results: ", output_results_guided)
 
     # Save results
-    saveto = "./dplm_out/reward_guided_esm2_reference"
+    saveto = "./dplm_out_reference/reward_guided_esm2_reference_{}_mask_partial_cont_{}_eos_bos_clamp_{}_recent_r_i_{}".format(mask_num, partial_cont, clamp_val, recent_r_i)
 
     os.makedirs(saveto, exist_ok=True)
     
@@ -219,7 +243,12 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--num_particles", type=int, default=5, help="Number of particles for guided sampling")
     parser.add_argument("--num_seqs", type=int, default=5, help="Number of sequences to generate for unguided sampling")
-    parser.add_argument("--beta", type=float, default=200.0, help="Reward scaling factor")
+    parser.add_argument("--beta", type=float, default=20.0, help="Reward scaling factor")
+    parser.add_argument("--batch_num", type=int, default=1, help="Number of batches for reward sampling")
+    parser.add_argument("--partial_cont", action='store_true', default = False, help="Use partial continuation for reward annealing")
+    parser.add_argument("--clamp_val", type=float, default=-1.0, help="Clamp value for reward integration coefficient. Default: no clamping")
+    parser.add_argument("--recent_r_i", action='store_true', default = False, help="Use most recent r_i for weight updates")
+    parser.add_argument("--mask_num", type=int, default=5, help="Number of masked positions in the sequence. 5 or 10")
     args = parser.parse_args()
     return args
 
