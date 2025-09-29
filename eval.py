@@ -31,7 +31,54 @@ class QwenPPL():
                                         predictions=text) 
 
         return result['perplexities']
+
+
+class QwenLogProb():
+    def __init__(self, model_name=None, task = "text"):
+
+        scratch_dir = os.getenv('SCRATCH')
+        hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
+
+        self.task = task
+
+        if model_name is not None:
+            self.model_name = model_name
+        
+        # if model name not specified use based on task (Qwen2.5 variants, 3B size)
+        else:
+            if self.task == "text":
+                self.model_name = "Qwen/Qwen2.5-3B-Instruct"
+            elif self.task == "code":
+                self.model_name = "Qwen/Qwen2.5-Coder-3B-Instruct"
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype="auto",
+            cache_dir = hf_cache_dir,
+            device_map="auto"
+        ).eval()
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir = hf_cache_dir)
+
+    def __call__(self, text):
+        input_ids = self.tokenizer(text, return_tensors="pt", padding=True).input_ids.to(self.model.device)
+
+        with torch.no_grad():
+            outputs = self.model(input_ids, labels=input_ids)
+            avg_llhd = outputs.loss
+            
+            print("avg_llhd: ", avg_llhd)
+
+
+            log_prob = - avg_llhd * input_ids.shape[1]
+
+            print("log_prob: ", log_prob)
+            print("length: ", input_ids.shape[1])
+
+            return log_prob, input_ids.shape[1]
+
     
+
 # computes likelihood under the target log probs, of the given samples
 class TargetLikelihood():
     def __init__(self, log_prob_target):
@@ -45,3 +92,4 @@ class TargetLikelihood():
     def __call__(self, samples):
         log_probs = self.log_prob_target(samples)
         return -log_probs.mean()
+    
