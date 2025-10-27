@@ -462,7 +462,7 @@ class GeoProductSampler(SMCSampler):
     
 
 # product sampler, which batches over number of prompts
-class ProductPromptSampler(SMCSampler):
+class ProductPromptSampler_Seq(SMCSampler):
     def __init__(self, denoiser, resample = True, adaptive_resampling = False, steps=10, temperature=1.0, mask_token = 126336):
         super().__init__(denoiser, resample=resample, adaptive_resampling=adaptive_resampling, steps=steps, temperature=temperature)
 
@@ -588,11 +588,6 @@ class ProductPromptSampler(SMCSampler):
                     # in this case, all logits are equal, so different smc samples will have equal weights
                     log_gamma = prompt_logits.log_softmax(dim=-1).sum(dim=0, keepdim=True) 
                     
-                    """ OLD way of computing log weights
-                    sum_rate = (log_gamma.exp() * mask_index_ans.unsqueeze(-1)).sum()
-                    gamma_sum =  (N_prompts/t) * sum_rate * ((1-t)/t)**(N_prompts - 1) - N_prompts/t  
-                    gamma_sum = gamma_sum.unsqueeze(0).repeat(num_samples, 1) # num_samples, 1 
-                    """
 
                     # new way
                     sum_rate = (log_gamma.exp() * mask_index_ans.unsqueeze(-1)).sum(dim=-1) # num_samples, l
@@ -601,16 +596,7 @@ class ProductPromptSampler(SMCSampler):
                     #print("sum rate shape: ", sum_rate.shape)
 
                     gamma_sum =  (N_prompts/t) * sum_rate * ((1-t)/t)**(N_prompts - 1) - N_prompts/t  
-                    #gamma_sum = gamma_sum.unsqueeze(0).repeat(num_samples, 1) # num_samples, l  
-
-                    #transfer_index = self.get_transfer_indx(remasking, 
-                    #                                        prod_logits, 
-                    #                                        x0s, 
-                    #                                        smc_samples, 
-                    #                                        mask_index_ans, 
-                    #                                        num_transfer_tokens, 
-                    #                                        i)
-
+                    
                     #print("log_weights shape: ", log_weights.shape)
                     #print("gamma_sum shape: ", gamma_sum.shape)
                     log_weights += gamma_sum.mean(dim=-1, keepdim=True) * num_transfer_tokens[0, i]/steps # num_samples, 1
@@ -639,14 +625,6 @@ class ProductPromptSampler(SMCSampler):
                         x0s[j, :] = x0s_j[0]
                         logits_samples[j, :, :] = prod_logits_j[0, :]
 
-                        """
-                        # OLD compute log weights
-                        log_gamma_j = logits_j.log_softmax(dim=-1).sum(dim=0, keepdim=True) # 1, l, vocab_size
-                        sum_rate_j = (log_gamma_j.exp() * mask_index_samples[j, :].unsqueeze(-1)).sum()
-                        gamma_sum_j =  (N_prompts/t) * sum_rate_j * ((1-t)/t)**(N_prompts - 1) - N_prompts/t
-                        log_weights[j, :] = log_weights[j, :] + gamma_sum_j * num_transfer_tokens[0, i]/steps # num_samples, 1
-                        """
-
                         # new 
                         log_gamma_j = logits_j.log_softmax(dim=-1).sum(dim=0, keepdim=True) # 1, l, vocab_size
                         sum_rate_j = (log_gamma_j.exp() * mask_index_samples[j, :].unsqueeze(-1)).sum(dim=-1) # 1, l
@@ -660,11 +638,7 @@ class ProductPromptSampler(SMCSampler):
                                                                 num_transfer_tokens, 
                                                                 i)
 
-                        #print("transfer index shape: ", transfer_index.shape)
-                        #print("transfer index: ", transfer_index)
-                        #print("gamma_sum_j shape: ", gamma_sum_j.shape)
-                        #print("gamma_sum[transfer_index] shape: ", gamma_sum_j[:, transfer_index].shape)
-
+                      
                         log_weights[j, :] = log_weights[j, :] + gamma_sum_j[:, transfer_index] * num_transfer_tokens[0, i]/steps # num_samples, 1
                         
 

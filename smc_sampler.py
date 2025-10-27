@@ -64,29 +64,6 @@ class AnnealSampler(SMCSampler):
         self.beta = beta
         self.sampling_strat = 'annealSMC'
 
-    # proposal logits is [B*M, L, V]
-    def get_log_weight_update_old(self, base_logits, i):
-        ###########################################
-        # log weights for resampling 
-        
-        log_mu = base_logits.log_softmax(dim=-1)
-
-        # t=0 corresponds to fully unmasked, and t=1 to fully masked
-        t = 1 - torch.tensor(i/self.steps)
-        
-        alpha_t = self.get_alpha_t(i)
-        neg_over_t_ratio = self.get_elbo_weight(i) #-1/t
-        offset = self.beta * neg_over_t_ratio #- B / t
-    
-        coeff = self.beta * (i)**(self.beta - 1) / (self.steps - i)**self.beta 
-        log_denoiser_anneal = (log_mu)*self.beta 
-        score_anneal_sum = (coeff * log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
-
-        # get a number per token 
-        g_all_tok = score_anneal_sum + offset  # b, l 
-        
-        return g_all_tok
-
     def time_integral_weight_update(self, base_logits, i):
         ###########################################
         # log weights for resampling 
@@ -135,24 +112,6 @@ class AnnealSampler(SMCSampler):
         coeff = coeff.clamp(max=50.)
 
         return coeff
-
-        #coeff_h = self.beta * t_higher**(1-self.beta) / (1 - self.beta) 
-        #coeff_l = self.beta * t_lower**(1-self.beta) / (1 - self.beta)
-
-
-        # evaluate hypergeometric function 
-        #hyp_2f1_h = scipy.special.hyp2f1(1-self.beta, 
-        #                                 1-self.beta,
-        #                                 2 - self.beta,
-        #                                 t_higher)
-        #hyp_2f1_l = scipy.special.hyp2f1(1-self.beta, 
-        ##                                 1-self.beta,
-        #                                 2 - self.beta,
-        #                                 t_lower)
-        
-        #coeff = coeff_h * hyp_2f1_h - coeff_l * hyp_2f1_l
-
-        #return coeff 
 
     # proposal logits is [B*M, L, V]
     def get_log_weight_update(self, base_logits, i, integrate=False):
@@ -363,15 +322,13 @@ class RewardSampler(SMCSampler):
         ###########################################
         # log weights for resampling 
         
-        log_mu = base_logits
+        #log_mu = base_logits
         
         log_mu_r = r_logits 
         
-        #summand =  torch.sum(log_mu.exp() - log_mu_r.exp(), dim=-1)  # b, l
         summand =  1.0 - log_mu_r.exp().sum(dim=-1)
 
         # coeff = a_t' / (1 - a_t) 
-        
         eff_step = step + self.step_start_val
 
         t = 1 - torch.tensor((eff_step)/self.eff_steps)
@@ -393,8 +350,6 @@ class RewardSampler(SMCSampler):
         # get a number per token 
         # start value already accounted for in anneal schedule
         delta_b = self.anneal_schedule(step+1) - self.anneal_schedule(step)
-
-        #g_all_tok = -integ_coeff * summand  + delta_b * r_i.unsqueeze(-1) # b, l 
 
         sum_val = -integ_coeff*summand 
 
@@ -473,9 +428,7 @@ class RewardSampler(SMCSampler):
                     x0_n = self.mask_fill_strat(x_neighbour.unsqueeze(0))  # [5, L, V], pick one at random, injects noise
 
                 r_j[b, l, v] = self.log_reward_func(x0_n)[0] # should be equal to r_i at ~masked_in_batch positions
-                #else:
-                #    r_j[b, l, v] = r_i[b]  # if not masked, reward is same as r_i
-
+              
                 r_tilted_logits[b, l, v] = logits[b, l, v] + self.anneal_schedule(step) * (r_j[b, l, v] - r_i[b])
 
                 
@@ -484,9 +437,6 @@ class RewardSampler(SMCSampler):
         print("r_tilted_logits shape: ", r_tilted_logits.shape)
         print("r_i shape: ", r_i.shape)
         print("r_j shape: ", r_j.shape)
-        #r_tilted_logits = logits 
-        #r_i = torch.tensor(0.) .to(self.denoiser.device)
-        #r_j = torch.zeros((B,L,V)).to(self.denoiser.device)
 
         return r_tilted_logits, r_j, r_i
 
@@ -653,26 +603,9 @@ class RewardSampler(SMCSampler):
 
             if return_traj:
                 x0_traj.append(x0.clone())
-
-            """
-            if remasking == 'low_confidence':
-                p = F.softmax(r_logits.to(torch.float64), dim=-1)
-                x0_p = torch.squeeze(
-                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
-            elif remasking == 'random':
-                x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
-            else:
-                raise NotImplementedError(remasking)
-            """
            
             x0 = torch.where(mask_index, x0, x)
-            #confidence = torch.where(mask_index, x0_p, -np.inf)
-
-            #transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
-            #for j in range(confidence.shape[0]):
-            #    _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
-            #    transfer_index[j, select_index] = True
-            #
+            
             transfer_index = base_transfer_idx
 
             x_pre_unmask = x.clone().view(batch_size, num_particles, self.length)

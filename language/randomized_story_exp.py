@@ -8,8 +8,7 @@ from lang_utils import *
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from samplers import DiffusionSampler
-from prod_smc_samplers import ProductPromptSampler
-from prod_new_samplers import NewProductPromptSampler, GeoAvgPromptSampler
+from prod_prompt_samplers import ProductPromptSampler, GeoAvgPromptSampler
 from llada_denoiser import LLaDADenoiser
 from utils import *
 from eval import * 
@@ -119,7 +118,7 @@ def story_gen(num_cond, seed, num_particles, remask_strat="low_confidence", save
 
     sampler = DiffusionSampler(llada_denoiser, steps=steps, temperature=1.0)
     
-    prod_sampler = NewProductPromptSampler(llada_denoiser, resample=True, 
+    prod_sampler = ProductPromptSampler(llada_denoiser, resample=True, 
                                         adaptive_resampling=False,
                                         steps=steps, temperature=1.0)
 
