@@ -174,7 +174,16 @@ class DiffusionSampler():
         
             if log_wandb:
                 
-                utils.wandb_log_xt(i, logits, x, x0, self.tokenizer, self.log_prob_target, mask_token = self.mask_token)
+                log_info = utils.wandb_log_xt(
+                    step = i, 
+                    logits = logits, 
+                    x = x, 
+                    x0 = x0, 
+                    tokenizer = self.tokenizer, 
+                    log_prob_target = self.log_prob_target, 
+                    mask_token = self.mask_token
+                )
+                wandb.log(log_info, step=i)
                 #wandb.log({"num_masked_tokens": int((x == self.mask_token).sum().item())})
                
             x[transfer_index] = x0[transfer_index]
@@ -186,9 +195,18 @@ class DiffusionSampler():
         # log final sample
         if log_wandb:
             #wandb.log({"step": self.steps})
-            utils.wandb_log_xt(self.steps, logits, x, x0, self.tokenizer, self.log_prob_target, mask_token = self.mask_token)
+            log_info = utils.wandb_log_xt(
+                step = self.steps, 
+                logits = logits, 
+                x = x, x0 = x0, 
+                tokenizer = self.tokenizer, 
+                log_prob_target = self.log_prob_target, 
+                mask_token = self.mask_token
+            )
+            wandb.log(log_info, step=self.steps)
             #wandb.log({"num_masked_tokens": int((x == self.mask_token).sum().item())})
-
+        
+        wandb.finish()
 
         if return_traj:
             return x, x0_traj, x_traj

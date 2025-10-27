@@ -27,6 +27,9 @@ class AnalyticDenoiser(Denoiser):
     length: The length of the tokens allowed (fixed)
     """
     def __init__(self, log_prob, vocab_size = 128, length = 2, device = 'cuda'):
+        
+        self.name = log_prob.name + "_Analytic"
+        
         self.log_prob_func = log_prob
         self.vocab_size = vocab_size
         self.length = length
@@ -41,6 +44,8 @@ class AnalyticDenoiser(Denoiser):
 
         self.tokenizer = None 
         self.construct_log_prob_table()
+
+        
 
    
 
@@ -104,7 +109,7 @@ def main():
     energy = MogGridEnergyFunction(side_length = 128, dimensionality=2, device='cuda')
 
     # make 2d plot of prob values
-    ad = AnalyticDenoiser(log_prob = energy.__call__, vocab_size=128, length=2)
+    ad = AnalyticDenoiser(log_prob = energy, vocab_size=128, length=2)
 
     plt.imshow(ad.log_prob_table.exp().detach().cpu().numpy())
     plt.colorbar()

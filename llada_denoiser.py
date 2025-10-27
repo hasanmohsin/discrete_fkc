@@ -4,6 +4,9 @@ import math
 import torch 
 from transformers import AutoTokenizer, AutoModel
 
+# this tokenizer gives warning about parallelism
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)

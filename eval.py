@@ -17,9 +17,9 @@ class QwenPPL():
         # if model name not specified use based on task (Qwen2.5 variants, 3B size)
         else:
             if self.task == "text":
-                self.model_name = "Qwen/Qwen2.5-3B-Instruct"
+                self.model_name = "Qwen/Qwen3-4B-Instruct-2507" #"Qwen/Qwen2.5-3B-Instruct"
             elif self.task == "code":
-                self.model_name = "Qwen/Qwen2.5-Coder-3B-Instruct"
+                self.model_name = "Qwen/Qwen3-4B-Instruct-2507" #"Qwen/Qwen2.5-Coder-3B-Instruct"
 
         self.perplexity = load("perplexity", module_type="metric")
 
@@ -47,9 +47,9 @@ class QwenLogProb():
         # if model name not specified use based on task (Qwen2.5 variants, 3B size)
         else:
             if self.task == "text":
-                self.model_name = "Qwen/Qwen2.5-3B-Instruct"
+                self.model_name = "Qwen/Qwen3-4B-Instruct-2507" #"Qwen/Qwen2.5-3B-Instruct"
             elif self.task == "code":
-                self.model_name = "Qwen/Qwen2.5-Coder-3B-Instruct"
+                self.model_name = "Qwen/Qwen3-4B-Instruct-2507" #"Qwen/Qwen2.5-Coder-3B-Instruct"
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
@@ -93,3 +93,10 @@ class TargetLikelihood():
         log_probs = self.log_prob_target(samples)
         return -log_probs.mean()
     
+
+class CodeEval():
+    def __init__(self):
+        pass 
+
+    def __call__(self, code_out):
+        pass 
