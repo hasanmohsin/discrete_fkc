@@ -462,7 +462,7 @@ class GeoProductSampler(SMCSampler):
     
 
 # product sampler, which batches over number of prompts
-class ProductPromptSampler_Seq(SMCSampler):
+class ProductPromptSampler_Seqs(SMCSampler):
     def __init__(self, denoiser, resample = True, adaptive_resampling = False, steps=10, temperature=1.0, mask_token = 126336):
         super().__init__(denoiser, resample=resample, adaptive_resampling=adaptive_resampling, steps=steps, temperature=temperature)
 
