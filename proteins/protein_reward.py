@@ -1,3 +1,4 @@
+from huggingface_hub import hf_hub_download
 import torch
 import torch.nn as nn 
 import numpy as np
@@ -11,7 +12,11 @@ from dplm_denoiser import DPLMDenoiser
 from samplers import DiffusionSampler
 from smc_sampler import RewardSampler
 
-from protein_esm2_reward import ESM2ProteinReward
+from protein_esm2_reward import ESM2ProteinReward, ESM2ProteinRewardReference
+
+from transformers import EsmForMaskedLM, EsmTokenizer
+
+from replearning_dplm._dplm.dplm_regression_model import DPLMRegressionModel
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,7 +25,52 @@ sys.path.append(parent_dir)
 #from byprot.models.dplm import DiffusionProteinLanguageModel as DPLM
 from dplm.generate_dplm import initialize_generation
 
+class Thermostability():
+    def __init__(self, device, tokenizer, beta = 1.0, hf_cache_dir=None):
+        self.tokenizer = tokenizer  # DPLM/denoiser tokenizer
+        self.beta = beta
+        self.device = device 
+        
+        # pick one file from the repo file list
+        repo_id = "airkingbd/dplm_representation_learning"
+        filename = "Thermostability_dplm_650m.ckpt"  # or any other .ckpt from the list
 
+        self.model_name = "Thermostability_dplm_650m"
+
+        ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename, local_dir=hf_cache_dir)
+        ckpt = torch.load(ckpt_path, map_location=device)
+
+        print(f"Loaded checkpoint from {ckpt_path}")
+
+        state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+
+        self.model = DPLMRegressionModel(test_result_path="./dplm_reg_out/", net_name = "airkingbd/dplm_650m",
+            load_pretrained = True, 
+            load_prev_scheduler= True,
+            save_top_k= 1,
+            freeze_backbone= 0,
+            dropout= 0.0,
+            use_lora= 0)
+
+        self.model.load_state_dict(state_dict, strict=False)
+        self.model.to(device)
+                
+        self.model.eval()
+        
+        print(f"Loaded DPLM Regression model: {self.model_name}")
+
+    def __call__(self, input_seq):
+        """
+        Make the class callable for use with RewardSampler.
+        """
+        batch_size = input_seq.shape[0]
+        #log_rewards = []
+       
+        with torch.no_grad():
+            outputs = self.model({'input_ids': input_seq.to(self.device)})
+
+        return self.beta * outputs
+    
 class SubstringReward():
     def __init__(self, target_string, tokenizer, device, beta = 1.0):
         
@@ -80,13 +130,16 @@ def main():
     #reward_fn = SubstringReward(target_string, tokenizer, device = device)
     #print("Target IDs: ", reward_fn.target_ids)
 
-    reference_sequence = "MSIQ"
-    reward_fn = ESM2ProteinReward(device=device, reference_sequence= reference_sequence, 
-                                  tokenizer = denoiser.dplm.tokenizer, beta=100.0, hf_cache_dir=hf_cache_dir)
+    reference_sequence = "SFNTVDEWLEAIKMGQYKESFANAGFTSFDVVSQMMMEDILRVGVTLAGHQKKILNSIQVMRAQM"
+    reward_fn = ESM2ProteinRewardReference(device=device, reference_sequence= reference_sequence, 
+                                  tokenizer = denoiser.dplm.tokenizer, beta=10.0, hf_cache_dir=hf_cache_dir)
 
-    
+    seq_length = len(reference_sequence)
+
+    print(f"Sequence length: {seq_length}")
+
     input_seq = initialize_generation(
-    length=4,
+    length=seq_length,
     num_seqs=2,
     tokenizer=denoiser.dplm.tokenizer,
     device=device
@@ -97,9 +150,9 @@ def main():
                               log_reward_func=reward_fn, 
                               resample=True, 
                               adaptive_resampling=False,
-                              steps = 4,
+                              steps = seq_length,
                               temperature=1.0)
-    x, x0, x_traj = sampler.sample(input_seq, return_traj=True, remasking='low_conf_noisy')
+    x, x0, x_traj = sampler.sample(input_seq, return_traj=True, remasking='low_conf_noisy', log_wandb=True)
 
     num_particles = 2
     batch_num = 1
@@ -107,7 +160,8 @@ def main():
     input_seq_particles = input_seq.reshape(batch_num, num_particles, -1)
 
     x_r, x0_r, x_traj_r, ess_traj, log_weights_traj = r_sampler.sample(input_seq_particles, return_traj=True, remasking='low_conf_noisy',
-                     batch_size = batch_num, num_particles = num_particles)
+                     batch_size = batch_num, num_particles = num_particles,
+                     log_wandb=True)
 
     print("Unguided x: ", x)
     print("Guided x: ", x)
@@ -144,21 +198,21 @@ def main():
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(
-        saveto, f"unguided_iter_{100}_L_{100}.fasta"
+        saveto, f"unguided_iter_{seq_length}_L_{seq_length}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results):
-        fp_save.write(f">SEQUENCE_{100}_L={100}\n")
+        fp_save.write(f">SEQUENCE_{seq_length}_L={seq_length}\n")
         fp_save.write(f"{seq}\n")
     fp_save.close()
 
     # Save guided sequences
     saveto_name = os.path.join(
-        saveto, f"guided_iter_{100}_L_{100}.fasta"
+        saveto, f"guided_iter_{seq_length}_L={seq_length}.fasta"
     )
     fp_save = open(saveto_name, "w")
     for idx, seq in enumerate(output_results_guided):
-        fp_save.write(f">SEQUENCE_{100}_L={100}\n")
+        fp_save.write(f">SEQUENCE_{seq_length}_L={seq_length}\n")
         fp_save.write(f"{seq}\n")
     fp_save.close()
 
