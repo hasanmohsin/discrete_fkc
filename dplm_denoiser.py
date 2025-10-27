@@ -19,6 +19,7 @@ class DPLMDenoiser(Denoiser):
         self.mask_token = self.dplm.mask_id
         self.length = None # works with flexible lengths, depending on input_seq in sampling
         self.name = "DPLM1Denoiser"
+        self.tokenizer = self.dplm.tokenizer
 
     # outputs logits, input seq is assumed to be tokenized 
     def __call__(self, input_seq):

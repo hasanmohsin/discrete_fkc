@@ -9,12 +9,12 @@ import argparse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from smc_sampler import RewardSampler
+from fk_steering import FKSteeringSampler
 from samplers import DiffusionSampler
 from dplm_denoiser import DPLMDenoiser
 from utils import set_all_seeds
 
 from protein_esm2_reward import ESM2ProteinReward
-from protein_esm2_llhd_reward import ESM2ProperLikelihoodProteinReward
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,16 +37,7 @@ def main(args):
     num_seqs = args.num_seqs
 
     # Initialize without reference sequence
-    """
     reward_fn = ESM2ProteinReward(
-        tokenizer=tokenizer,
-        beta = args.beta,  # Adjust this for reward scaling
-        hf_cache_dir=hf_cache_dir,
-        device="cuda"
-    )
-    """
-
-    reward_fn = ESM2ProperLikelihoodProteinReward(
         tokenizer=tokenizer,
         beta = args.beta,  # Adjust this for reward scaling
         hf_cache_dir=hf_cache_dir,
@@ -54,7 +45,7 @@ def main(args):
     )
 
     sampler = DiffusionSampler(denoiser=denoiser, steps=seq_length, temperature=1.0)
-    r_sampler = RewardSampler(denoiser=denoiser,
+    r_sampler = FKSteeringSampler(denoiser=denoiser,
                               log_reward_func=reward_fn,
                               resample=True,
                               adaptive_resampling=False,
@@ -156,7 +147,7 @@ def parse_args():
     parser.add_argument("--num_seqs", type=int, default=5, help="Number of sequences to generate")
     parser.add_argument("--beta", type=float, default=200.0, help="Reward scaling factor")
     parser.add_argument("--batch_num", type=int, default=1, help="Number of batches for reward sampling")
-    parser.add_argument("--save", type=str, default="./dplm_out/reward_guided_esm2_uncond_true_mult_1_particle", help="Directory to save outputs")
+    parser.add_argument("--save", type=str, default="./dplm_out/fk_reward_guided_esm2_uncond_true_mult_1_particle", help="Directory to save outputs")
     parser.add_argument("--recent_r_i", action='store_true', default = False, help="Use most recent r_i for weight updates")
     parser.add_argument("--clamp_val", type=float, default=-1.0, help="Clamp value for reward integration coefficient. Default: no clamping")
     args = parser.parse_args()
