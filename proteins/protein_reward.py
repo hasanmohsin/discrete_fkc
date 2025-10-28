@@ -69,7 +69,9 @@ class Thermostability():
         with torch.no_grad():
             outputs = self.model({'input_ids': input_seq.to(self.device)})
 
-        return self.beta * outputs
+        print("Thermostability outputs: ", outputs)
+
+        return self.beta * torch.log(outputs)
     
 class SubstringReward():
     def __init__(self, target_string, tokenizer, device, beta = 1.0):
