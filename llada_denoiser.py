@@ -20,17 +20,16 @@ class LLaDADenoiser(Denoiser):
 
         if save_to_hf_cache:
             scratch_dir = os.getenv('SCRATCH')
-            hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
+            self.hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
             
-            if not os.path.exists(hf_cache_dir):
-                os.makedirs(hf_cache_dir)
+            if not os.path.exists(self.hf_cache_dir):
+                os.makedirs(self.hf_cache_dir)
         else:
-            hf_cache_dir = None
+            self.hf_cache_dir = None
 
         self.name = "LLaDA-8B-Instruct"
-        self.model = AutoModel.from_pretrained('GSAI-ML/'+self.name, cache_dir = hf_cache_dir, trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-        self.tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/'+self.name, cache_dir = hf_cache_dir, trust_remote_code=True)
-
+        self.model = AutoModel.from_pretrained('GSAI-ML/'+self.name, cache_dir = self.hf_cache_dir, trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+        self.tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/'+self.name, cache_dir = self.hf_cache_dir, trust_remote_code=True)
         self.model.to(self.device).eval()
         
         self.mask_token = 126336
@@ -102,3 +101,39 @@ class LLaDADenoiser(Denoiser):
 
         # logits over clean (non-mask) data (incl special tokens)
         return logits 
+    
+
+
+class LLaDAMOEDenoiser(LLaDADenoiser):
+
+    def __init__(self, device ='cuda', save_to_hf_cache = True):
+        super().__init__(device, save_to_hf_cache)
+        self.name = 'LLaDA-MoE-7B-A1B-Instruct'
+        self.model = AutoModel.from_pretrained('inclusionAI/'+ self.name, 
+                                               cache_dir = self.hf_cache_dir, 
+                                               trust_remote_code=True, 
+                                               torch_dtype=torch.bfloat16)
+        
+        self.tokenizer = AutoTokenizer.from_pretrained('inclusionAI/'+self.name, 
+                                                       cache_dir = self.hf_cache_dir, 
+                                                       trust_remote_code=True)
+        self.model.to(self.device).eval()
+
+        self.mask_token = 156895
+
+    def apply_prompt_template(self, prompt_list):
+
+        if "Instruct" not in self.name:
+            return prompt_list
+        
+        # process for instruct model 
+        new_prompts = []
+        
+        # Add special tokens for the Instruct model. The Base model does not require the following two lines.
+        for p in prompt_list:
+            m = [{"role": "system", "content": "You are a helpful AI assistant."}, 
+                 {"role": "user", "content": p}]
+            new_prompt = self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
+            new_prompts.append(new_prompt)
+
+        return new_prompts
