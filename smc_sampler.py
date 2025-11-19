@@ -307,7 +307,7 @@ class AnnealSampler(SMCSampler):
     
     
 class RewardSampler(SMCSampler):
-    def __init__(self, denoiser, log_reward_func, resample = True, adaptive_resampling = False, steps=10, temperature=1.0, partial_cont = False):
+    def __init__(self, denoiser, log_reward_func, resample = True, adaptive_resampling = False, steps=10, temperature=1.0, partial_cont = False, partial_mask_fill = True):
         super().__init__(denoiser, resample, adaptive_resampling, steps, temperature)
         self.log_reward_func = log_reward_func
         self.anneal_schedule = lambda i: (i) / self.steps
@@ -316,6 +316,7 @@ class RewardSampler(SMCSampler):
         self.partial_cont = partial_cont
 
         self.sampling_strat = "rewardSMC"
+        self.partial_mask_fill = partial_mask_fill
 
     # proposal logits is [B*M, L, V]
     def get_log_weight_update(self, base_logits, r_logits, r_i, step):
@@ -456,6 +457,11 @@ class RewardSampler(SMCSampler):
         #x_fill = torch.where(x == self.mask_token, x_fill, x)  # fill in masked tokens        
 
         # other way
+
+        # if not partial_mask_fill, don't change anything, leave masks in x
+        # in this case the reward is expected to handle masks properly
+        if not self.partial_mask_fill:
+            return x
 
         if b >= 0:
             x_fill = torch.where(x == self.mask_token, self.x0_base, x)[b,:].unsqueeze(0)

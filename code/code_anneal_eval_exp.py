@@ -48,6 +48,18 @@ def mbpp_load():
 
     return dataset
 
+def mbpp_san_load():
+    scratch_dir = os.getenv('SCRATCH')
+    hf_cache_dir = os.path.join(scratch_dir, 'huggingface_cache')
+
+    data_dir = os.path.join(scratch_dir, 'code_data')
+
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    dataset = load_dataset("mbpp", "sanitized", cache_dir=hf_cache_dir)
+
+    return dataset
 
 def parse_unit_tests(unit_test_str, entry_point):
     # unit_test_list is a list of strings, each string is a unit test
@@ -159,97 +171,124 @@ def process_sample(sample, dataset):
 
         sample['base_prompt'] = sample['prompt'] + " The function should have name: {}".format(entry_point)
 
+    elif dataset == "mbpp_san":
+        # get entry point from sample code
+        code_lines = sanitize.sanitize(sample['code'])
+
+        # get def .... ( ... ): line
+        for line in code_lines.splitlines():
+            line = line.strip()
+            if line.startswith("def "):
+                entry_point = line.split("(")[0].replace("def ", "").strip()
+                break
+
+        sample['entry_point'] = entry_point
+
+        sample['base_prompt'] = sample['prompt'] + " The function should have name: {}".format(entry_point)
+
+
     return sample
 
-def code_gen_joint_only(moe, dataset, num_datapoints, seed, joint_temp, remask_strat="low_confidence", savedir="./results/human_eval_out_joint_random/", cutoff_resample=None):
 
+def code_gen_naive_only(moe, dataset, num_datapoints, seed, naive_temp, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None):
     set_all_seeds(seed)
 
     if moe:
         llada_denoiser = LLaDAMOEDenoiser(device='cuda')
     else:
         llada_denoiser = LLaDADenoiser(device='cuda')
+
     steps = 128
     gen_length = steps
 
+    #naive_temp = 1/beta
+
+
+    base_eval_list = []
+    anneal_eval_list = []
+
+
     sampler = DiffusionSampler(llada_denoiser, steps=steps, 
-                               temperature=joint_temp)
+                               temperature=naive_temp)
    
+    print("\ndataset: ", dataset)
 
     if dataset == "human_eval":
         total_data = human_eval_load()
     elif dataset == "mbpp":
         total_data = mbpp_load()
+    elif dataset == "mbpp_san":
+        total_data = mbpp_san_load()
 
-    for i in range(num_datapoints):
-        sample = total_data['test'][i]
+    # -1 means all datapoints are evaluated on
+
+    if num_datapoints == -1 or num_datapoints > len(total_data['test']):
+        num_datapoints = len(total_data['test'])
+
+    print(f"Evaluating on {num_datapoints} out of {len(total_data['test'])} datapoints.")
+    
+
+    for p in range(num_datapoints):
+        sample = total_data['test'][p]
+
         sample = process_sample(sample, dataset)
 
-        prompt_pre = "# Write a function with the following specification: \n"
+        prompt_pre = "Write a function with the following specification: \n"
 
-        base_prompt = prompt_pre + sample['prompt'] #+ "\n#The function should pass the following test(s):"
+        base_prompt = sample['base_prompt'] #prompt_pre + sample['prompt'] #+ "\nThe function should pass the following test(s):"
         
         cond_list = sample['test_list']
-        num_conditions = len(cond_list)
 
-        joint_prompt = base_prompt + "\n".join(cond_list)
+        prompt = base_prompt #+ "\n".join(cond_list)
+         
 
-        prompt_list = [base_prompt + "\n" + cond for cond in cond_list]
-
-        len(prompt_list)
-
-        # inputs 
-        prod_input_ids = llada_denoiser.get_input_ids_template(prompt_list)
-        prod_inputs = llada_denoiser.apply_prompt_template(prompt_list)
-        print("Prod inputs: ", prod_inputs)
-        print("Length of prod inputs: ", len(prod_inputs[0]))
-
-        joint_template = llada_denoiser.apply_prompt_template([joint_prompt])
-        jp_input_ids = llada_denoiser.prepare_init_seq([joint_prompt], gen_length=gen_length)
-
-        print("joint_template: ", joint_template)
-        print("Length of joint template: ", (jp_input_ids != llada_denoiser.mask_token).sum(dim=-1))
-        
-        print("Decoded input: ", llada_denoiser.tokenizer.batch_decode(prod_input_ids, skip_special_tokens=False))
-        print("Input: ", prod_input_ids)
+        template = llada_denoiser.apply_prompt_template([prompt])
+        input_ids = llada_denoiser.prepare_init_seq([prompt], gen_length=gen_length)
+     
 
         # Joint Prompt
-        out = sampler.sample(init_seq=jp_input_ids, batch_size=1, 
+        out = sampler.sample(init_seq=input_ids, batch_size=1, 
                             remasking= remask_strat, 
                             log_wandb=False)
         #wandb.finish() 
 
+        # remove prompt from output 
         out_decoded = llada_denoiser.tokenizer.batch_decode(out, skip_special_tokens=True)
 
-        out_after_prompt = out_decoded[0].replace(joint_template[0], "")
+        print("\n\nNaive out.shape: ", out.shape)
 
-        print("Out after prompt removal: ", out_after_prompt)
+        no_sp_template = llada_denoiser.encode_prompt_list(template)
+        no_sp_template = llada_denoiser.tokenizer.batch_decode(no_sp_template, skip_special_tokens=True)
 
-        code_out = sanitize.sanitize(text=out_after_prompt, entrypoint = sample['entry_point'])
-
-        print("Extracted Code Output: ", code_out)
+        out_decoded_prompt = out_decoded.copy()
+        out_decoded = [out_decoded_.replace(no_sp_template[0], "") for out_decoded_ in out_decoded]
+        code_out = sanitize.sanitize(text = out_decoded[0], entrypoint = sample['entry_point'])
+       
+        print("\n Naive Anneal Extracted Code Output: ", code_out)
 
         evals = evaluate_code_unit_tests(cond_list, code_out)
 
-        print("Success: ", evals)
+        # Product Prompt
+        if cutoff_resample < -1:
+            cutoff_resample = None
+        
 
-        print("Joint prompt output: ", out_decoded)
+        print("\n\nNaive anneal success: ", evals)
 
-        save_path = savedir+"joint_only_{}_len_{}_point_{}/".format(remask_strat, num_conditions, i) #savedir
+        base_eval_list.append(evals['pass@1'])
+        anneal_eval_list.append(-1)  # Placeholder since no annealed evals are done here
+
+        save_path = savedir+"code_out_{}_temp_{}_point_{}/".format(remask_strat, naive_temp, p) #savedir
         os.makedirs(save_path, exist_ok=True)
 
         # save joint output 
-        with open(os.path.join(save_path, f"jp_seed{seed}_point_{i}.txt"), 'w') as f:
-            f.write("Prompt: \n")
-            f.write(joint_prompt + "\n\n")
-            f.write("Output: \n")
-            f.write(out_decoded[0] + "\n\n")
-            f.write("Unit tests success: \n")
-            #f.write(f"PPL: {jp_ppl}\n")
+        with open(os.path.join(save_path, f"base_temp_seed{seed}_point_{p}_pass_{evals['pass@1']}.txt"), 'w') as f:
+            f.write(out_decoded_prompt[0] + "\n\n")
+            
 
-    return 
-
-
+        
+              
+    return base_eval_list, anneal_eval_list
 
 def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None, compute_ppl = False):
     set_all_seeds(seed)
@@ -284,6 +323,8 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
         total_data = human_eval_load()
     elif dataset == "mbpp":
         total_data = mbpp_load()
+    elif dataset == "mbpp_san":
+        total_data = mbpp_san_load()
 
     # -1 means all datapoints are evaluated on
 
@@ -303,7 +344,6 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
         base_prompt = sample['base_prompt'] #prompt_pre + sample['prompt'] #+ "\nThe function should pass the following test(s):"
         
         cond_list = sample['test_list']
-        num_conditions = len(cond_list)
 
         prompt = base_prompt #+ "\n".join(cond_list)
          
@@ -318,8 +358,16 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
                             log_wandb=False)
         #wandb.finish() 
 
+        # remove prompt from output 
         out_decoded = llada_denoiser.tokenizer.batch_decode(out, skip_special_tokens=True)
 
+        print("\n\nNaive out.shape: ", out.shape)
+
+        no_sp_template = llada_denoiser.encode_prompt_list(template)
+        no_sp_template = llada_denoiser.tokenizer.batch_decode(no_sp_template, skip_special_tokens=True)
+
+        out_decoded_prompt = out_decoded.copy()
+        out_decoded = [out_decoded_.replace(no_sp_template[0], "") for out_decoded_ in out_decoded]
         code_out = sanitize.sanitize(text = out_decoded[0], entrypoint = sample['entry_point'])
        
         print("\n Naive Anneal Extracted Code Output: ", code_out)
@@ -333,8 +381,6 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
         anneal_input_ids = input_ids.reshape((input_ids.shape[0],  1, input_ids.shape[1])).repeat((1, num_particles, 1))
 
         print("anneal_input_ids shape: ", anneal_input_ids.shape)
-        #print("anneal_input_ids: ", anneal_input_ids)
-        #print("sampler length: ", anneal_sampler.length)
 
         # Annealed prompt 
         anneal_sampler.length = input_ids.shape[-1]
@@ -346,18 +392,21 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
                                             return_traj = False, 
                                             log_wandb = False) #110
 
+        print("\n\nAnneal out.shape: ", anneal_out.shape)
+
         anneal_out_decoded = llada_denoiser.tokenizer.batch_decode(anneal_out, skip_special_tokens=True)
         #print("Joint Prompt Output: ", out)
    
-        no_sp_template = llada_denoiser.encode_prompt_list(template)
-        no_sp_template = llada_denoiser.tokenizer.batch_decode(no_sp_template, skip_special_tokens=True)
-
         # add template before prod out
-        for i in range(len(anneal_out_decoded)):
-            anneal_out_decoded[i] = no_sp_template[0] + anneal_out_decoded[i]
+        #for i in range(len(anneal_out_decoded)):
+        #    anneal_out_decoded[i] = no_sp_template[0] + anneal_out_decoded[i]
 
         # sample one from random particles to evaluate
+        # take out prompt from output
+        anneal_out_decoded_prompt = anneal_out_decoded.copy() 
+        anneal_out_decoded = [out_decoded.replace(no_sp_template[0], "") for out_decoded in anneal_out_decoded]
         anneal_code_out = sanitize.sanitize(text = anneal_out_decoded[0], entrypoint = sample['entry_point'])
+
         # parse_code_out(prod_out_decoded[0], sample['entry_point'])
 
         print("Extracted Anneal Code Output: ", anneal_code_out)
@@ -375,21 +424,14 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
 
         # save joint output 
         with open(os.path.join(save_path, f"base_temp_seed{seed}_point_{p}_pass_{evals['pass@1']}.txt"), 'w') as f:
-            f.write("Prompt: \n")
-            f.write(prompt + "\n\n")
-            f.write("Output: \n")
-            f.write(out_decoded[0] + "\n\n")
+            f.write(out_decoded_prompt[0] + "\n\n")
             
 
-        # save product output
+        # save annealed output
         for i in range(len(anneal_out_decoded)):
             with open(os.path.join(save_path, f"anneal_seed{seed}_particle_num_{i}_of_{num_particles}_beta_{anneal_sampler.beta}_pass_{anneal_evals['pass@1']}.txt"), 'w') as f:
-                f.write("Prompt: \n")
-                f.write(prompt + "\n\n")
-                f.write("\n\n")
-                f.write("Output: \n")
-                f.write(f"Particle {i}:\n")
-                f.write(anneal_out_decoded[i] + "\n\n")
+                f.write(f"Particle {i} (incl prompt):\n")
+                f.write(anneal_out_decoded_prompt[i] + "\n\n")
               
     return base_eval_list, anneal_eval_list
 
@@ -403,18 +445,43 @@ def main(args):
     moe = args.llada_moe
 
     if args.only_joint:
-        base_acc = code_gen_joint_only(moe, dataset, num_pts, seed, args.joint_temp, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
+        base_acc, anneal_acc = code_gen_naive_only(moe, dataset, num_pts, seed, args.joint_temp, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
+        
+        #base_acc = code_gen_joint_only(moe, dataset, num_pts, seed, args.joint_temp, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
     else:
         base_acc, anneal_acc = code_gen(moe, dataset, num_pts, seed, args.beta, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
 
     print("\n\nAverage Naive Temp Accuracy over {} points: ".format(num_pts), np.array(base_acc).mean())
     print("Average SMC Anneal Accuracy over {} points: ".format(num_pts), np.array(anneal_acc).mean())
 
+    if not args.only_joint:
+        summary_savedir = os.path.join(dataset+"_summaries_remask_strat_{}/".format(remask_strat))
+    else:
+        summary_savedir = os.path.join(dataset+"_summaries_naive_only_remask_strat_{}_temp_{}/".format(remask_strat, args.joint_temp))
+    
+    if not os.path.exists(summary_savedir):
+        os.makedirs(summary_savedir)
+
+    # write accuracies to a file
+    with open(os.path.join(summary_savedir, f"summary_seed_{seed}_points_{num_pts}_particles_{num_particles}_beta_{args.beta}_remask_{remask_strat}.txt"), 'w') as f:
+        f.write("Average Base Accuracy: {}\n".format(np.array(base_acc).mean()))
+        f.write("Average Anneal Accuracy: {}\n\n".format(np.array(anneal_acc).mean()))
+
+        if num_pts > 10 or num_pts == -1:
+            f.write("Average Base Accuracy on pts after 10: {}\n".format(np.array(base_acc[10:]).mean()))
+            f.write("Average Anneal Accuracy on pts after 10: {}\n\n".format(np.array(anneal_acc[10:]).mean()))
+
+        f.write("Base Accuracies: \n")
+        f.write(str(base_acc) + "\n")
+    
+        f.write("Anneal Accuracies: \n")
+        f.write(str(anneal_acc) + "\n")
+
     return 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Human Eval Code Experiment")
-    parser.add_argument("--dataset", type=str, default="human_eval", choices=["human_eval", "mbpp"], help="Dataset to use: human_eval or mbpp")
+    parser.add_argument("--dataset", type=str, default="human_eval", choices=["human_eval", "mbpp", "mbpp_san"], help="Dataset to use: human_eval or mbpp")
     parser.add_argument("--num_points", type=int, default=1, help="Number of datapoints to evaluate on")
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--num_particles", type=int, default=5, help="Number of particles for guided sampling")
@@ -425,7 +492,14 @@ def parse_args():
     parser.add_argument("--joint_temp", type=float, default=1.0, help="Temperature for joint prompt sampling")
     parser.add_argument('--beta', type=float, default=1.0, help='Beta value for annealing sampler')
     parser.add_argument('--llada_moe', action='store_true', help='Use Mixture of Experts LLaDA model')
+    parser.add_argument('--validation', action='store_true', help='Use validation set instead of test set')
     args = parser.parse_args()
+
+    #args.num_points = 1
+    #args.num_particles= 1
+    #args.savedir = "./results/human_eval_code_gen_1_p_beta_inf_1_particles/"
+    #args.beta = 5.0 
+    #args.remask_strat = "low_confidence"
 
     args.savedir = args.savedir.replace("human_eval", args.dataset)
     return args
