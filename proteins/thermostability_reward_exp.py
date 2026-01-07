@@ -32,7 +32,7 @@ def main(args):
 
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
 
-    seq_length = args.seq_length  #50
+    seq_length = args.seq_length  
     num_seqs = args.num_seqs
 
     reward_fn = Thermostability(device=device, 
@@ -114,7 +114,7 @@ def main(args):
     ]
     print("Guided Results: ", output_results_guided)
 
-    saveto = args.save #"./dplm_out/reward_guided_esm2_uncond_true_mult_1_particle"
+    saveto = args.save 
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(

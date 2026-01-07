@@ -23,7 +23,7 @@ from dplm.generate_dplm import initialize_generation
 def main(args):
     device = 'cuda'
     denoiser = DPLMDenoiser(device=device)
-    seed = args.seed #1 #2315
+    seed = args.seed
 
     set_all_seeds(seed)
 
@@ -124,7 +124,7 @@ def main(args):
     ]
     print("Guided Results: ", output_results_guided)
 
-    saveto = args.save #"./dplm_out/reward_guided_esm2_uncond_true_mult_1_particle"
+    saveto = args.save 
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(

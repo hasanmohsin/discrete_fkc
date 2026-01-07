@@ -14,7 +14,6 @@ from samplers import DiffusionSampler
 from dplm_denoiser import DPLMDenoiser
 from utils import set_all_seeds
 
-#from protein_esm2_reward import ESM2ProteinReward
 from protein_esm2_llhd_reward import ESM2ProperLikelihoodProteinReward
 
 # Add the parent directory to Python path to access dplm
@@ -25,7 +24,7 @@ from dplm.generate_dplm import initialize_generation
 def main(args):
     device = 'cuda'
     denoiser = DPLMDenoiser(device=device)
-    seed = args.seed #1 #2315
+    seed = args.seed 
 
     set_all_seeds(seed)
 
@@ -34,7 +33,7 @@ def main(args):
 
     tokenizer = denoiser.dplm.tokenizer  # Initialize your tokenizer here
 
-    seq_length = args.seq_length  #50
+    seq_length = args.seq_length  
     num_seqs = args.num_seqs
 
     # Initialize without reference sequence
@@ -125,7 +124,7 @@ def main(args):
     ]
     print("Guided Results: ", output_results_guided)
 
-    saveto = args.save #"./dplm_out/reward_guided_esm2_uncond_true_mult_1_particle"
+    saveto = args.save 
 
     os.makedirs(saveto, exist_ok=True)
     saveto_name = os.path.join(
