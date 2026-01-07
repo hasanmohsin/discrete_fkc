@@ -35,7 +35,7 @@ For Protein experiments:
 
 - ESM2 reward:
 ```
-python unconditional_esm_reward.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_esm2_reward"
+python unconditional_esm_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_esm2_reward"
 ```
 
 - Thermostability reward:
