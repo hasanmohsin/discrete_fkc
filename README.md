@@ -2,7 +2,7 @@
 
 Code for Discrete Feynman-Kac Correctors.
 
-![alt_text](https://github.com/hasanmohsin/discrete_fkc/abstract_figure_xlarge (1).pdf "Discrete Feynman-Kac Correctors Overview")
+![alt_text](https://github.com/hasanmohsin/discrete_fkc/images/abstract_figure_xlarge.pdf "Discrete Feynman-Kac Correctors Overview")
 
 
 
