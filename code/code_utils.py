@@ -43,8 +43,6 @@ def eval_tests(test_list, code_list):
     test_cases = [sanitize.sanitize(test) for test in test_list]
 
     code_list = [sanitize.sanitize(code.split('```python\n', 1)[-1]) for code in code_list] 
-#                sample['doc']["entry_point"])] 
-#                for sample in data]
 
     candidates = [[sanitize.sanitize(code) for code in code_list]]
 
