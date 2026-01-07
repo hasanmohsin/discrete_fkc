@@ -111,7 +111,6 @@ def lin_reg(w_id, seed, num_particles,
     out = sampler.sample(init_seq=jp_input_ids, batch_size=1, 
                          remasking= remask_strat, 
                          log_wandb=False)
-    #wandb.finish() 
 
     # remove prompt from output
     out = out[:, jp_input_ids.shape[1]:]
@@ -131,14 +130,9 @@ def lin_reg(w_id, seed, num_particles,
         
 
     prod_out_decoded = llada_denoiser.tokenizer.batch_decode(prod_out, skip_special_tokens=True)
-    #print("Joint Prompt Output: ", out)
    
     no_sp_joint_template = llada_denoiser.encode_prompt_list(joint_template)
     no_sp_joint_template = llada_denoiser.tokenizer.batch_decode(no_sp_joint_template, skip_special_tokens=True)
-
-    # add template before prod out
-    #for i in range(len(prod_out_decoded)):
-    #    prod_out_decoded[i] = no_sp_joint_template[0] + prod_out_decoded[i]
 
     print("Joint prompt output: ", out_decoded)
     print("Product prompt output: ", prod_out_decoded)
@@ -183,7 +177,6 @@ def lin_reg(w_id, seed, num_particles,
         f.write(joint_prompt + "\n\n")
         f.write("Output: \n")
         f.write(out_decoded[0] + "\n\n")
-        #f.write(f"PPL: {jp_ppl}\n")
 
     # save product output
     for i in range(len(prod_out_decoded)):
@@ -194,7 +187,6 @@ def lin_reg(w_id, seed, num_particles,
             f.write("Output: \n")
             f.write(f"Particle {i}:\n")
             f.write(prod_out_decoded[i] + "\n\n")
-            #f.write(f"PPL: {prod_ppl[i]}\n")
 
     return err_prod_a_, err_prod_b_, err_joint_a_, err_joint_b_, incorrect_format_joint
 
@@ -220,57 +212,15 @@ def main(args):
                                                                        noise_std,
                                                                        remask_strat,
                                                                        savedir)
+    
+    print("\nFinal Results:")
+    print("Product Prompt Error a: ", error_prod_a)
+    print("Product Prompt Error b: ", error_prod_b)
+    print("Joint Prompt Error a: ", error_joint_a)
+    print("Joint Prompt Error b: ", error_joint_b)
+    print("Incorrect Format Joint: ", incorrect_format_joint)
 
     return 
-
-"""
-def main_over_n_samples(args):
-    seeds = [12, 13, 14, 15, 16]
-    num_particles_list = [1, 4, 8]
-    n_samples_list = [10, 20, 50, 100]
-
-    all_results = {}
-
-    for n_samples in n_samples_list:
-        all_results[n_samples] = {}
-        for num_particles in num_particles_list:
-            all_results[n_samples][num_particles] = {
-                'prod_a_err': [],
-                'prod_b_err': [],
-                'joint_a_err': [],
-                'joint_b_err': [],
-                'joint_incorrect_format': []
-            }
-            for seed in seeds:
-                err_prod_a, err_prod_b, err_joint_a, err_joint_b, incorrect_format_joint = lin_reg(w_id=0, 
-                                                                                                   seed=seed, 
-                                                                                                   num_particles=num_particles,
-                                                                                                   num_splits_prod=5,
-                                                                                                   n_samples=n_samples,
-                                                                                                   n_features=2,
-                                                                                                   noise_std=1.0,
-                                                                                                   remask_strat="low_confidence",
-                                                                                                   savedir="./results/story_gen_prod_random/")
-                
-                l2_err_joint_seed = np.sqrt(np.array(err_joint_a_all)**2 + np.array(err_joint_b_all)**2)
-                l2_err_prod_seed = np.sqrt(np.array(err_prod_a_all)**2 + np.array(err_prod_b_all)**2)
-
-                all_results[n_samples][num_particles]['prod_a_err'].append(err_prod_a)
-                all_results[n_samples][num_particles]['prod_b_err'].append(err_prod_b)
-                all_results[n_samples][num_particles]['joint_a_err'].append(err_joint_a)
-                all_results[n_samples][num_particles]['joint_b_err'].append(err_joint_b)
-                all_results[n_samples][num_particles]['joint_incorrect_format'].append(incorrect_format_joint)
-
-            print(f"\n\nn_samples: {n_samples}, num_particles: {num_particles}")
-            print("Product a err: ", all_results[n_samples][num_particles]['prod_a_err'])
-            print("Product b err: ", all_results[n_samples][num_particles]['prod_b_err'])
-            print("Joint a err: ", all_results[n_samples][num_particles]['joint_a_err'])
-            print("Joint b err: ", all_results[n_samples][num_particles]['joint_b_err'])
-            print("Joint incorrect format: ", all_results[n_samples][num_particles]['joint_incorrect_format'])
-
-            print("Avg Product a err: ", np.mean(all_results[n_samples][num_particles]['prod_a_err']))
-            print("Avg Product b err: ", np.mean(all_results[n_samples][num_particles]['prod_b_err']))
-"""
 
 def parse_args():
     parser = argparse.ArgumentParser(description="ESM2 Reference-based Reward Experiment")
@@ -278,7 +228,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--num_particles", type=int, default=5, help="Number of particles for guided sampling")
     parser.add_argument("--remask_strat", type=str, default="random", help="Remasking strategy: random or low_confidence")
-    parser.add_argument("--savedir", type=str, default="./results/story_gen_prod_random/", help="Directory to save results")
+    parser.add_argument("--savedir", type=str, default="./results/lin_reg_prod_random/", help="Directory to save results")
     
     parser.add_argument("--num_splits_prod", type=int, default=5, help="Number of splits for product prompt")
     parser.add_argument("--n_samples", type=int, default=20, help="Number of samples in dataset")

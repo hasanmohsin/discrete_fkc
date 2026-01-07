@@ -1,21 +1,3 @@
-
-
-
-# a list of mutually compatible conditions
-#cond_bank = [
-#    " It should include a hungry cat.",
-#    " It should take place in a forest.",
-#    " It should have a lake.",
-#    " It should include a dog.",
-#    " It should include a brave knight.",
-#    " It should include a wolf.",
-#    " It should include a dragon.",
-#    " It should use simple wording.",
-#    " It should be a mystery story.",
-#    " It should be scary.",
-    
-#]
-
 cond_bank = [
     " It should include a hungry cat.",
     " It should feature a loyal dog.",

@@ -6,9 +6,6 @@ import matplotlib.pyplot as plt
 # X out is of shape (n_samples, n_features) [1, x, x^2, ...]
 # y out is of shape (n_samples,)
 def make_lin_reg_dataset(w_vec, n_samples, n_features, noise_std):
-    #np.random.seed(seed)
-    #torch.manual_seed(seed)
-
     w_vec = torch.tensor(w_vec)
 
     assert w_vec.shape == (n_features,)

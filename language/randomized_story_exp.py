@@ -65,7 +65,6 @@ def story_gen_joint_only(num_cond, seed, joint_temp, remask_strat="low_confidenc
     out = sampler.sample(init_seq=jp_input_ids, batch_size=1, 
                          remasking= remask_strat, 
                          log_wandb=False)
-    #wandb.finish() 
 
     out_decoded = llada_denoiser.tokenizer.batch_decode(out, skip_special_tokens=True)
 
@@ -122,11 +121,7 @@ def story_gen(num_cond, seed, num_particles, remask_strat="low_confidence", save
                                         adaptive_resampling=False,
                                         steps=steps, temperature=1.0)
 
-    #prod_sampler = GeoAvgPromptSampler(llada_denoiser, resample=True, 
-    #                                    adaptive_resampling=False,
-    #                                    steps=128, temperature=1.0)
-
-
+   
     # inputs 
     prod_input_ids = llada_denoiser.get_input_ids_template(prompt_list)
     prod_inputs = llada_denoiser.apply_prompt_template(prompt_list)
@@ -169,7 +164,7 @@ def story_gen(num_cond, seed, num_particles, remask_strat="low_confidence", save
         
 
     prod_out_decoded = llada_denoiser.tokenizer.batch_decode(prod_out, skip_special_tokens=True)
-    #print("Joint Prompt Output: ", out)
+    
    
     no_sp_joint_template = llada_denoiser.encode_prompt_list(joint_template)
     no_sp_joint_template = llada_denoiser.tokenizer.batch_decode(no_sp_joint_template, skip_special_tokens=True)
@@ -203,7 +198,6 @@ def story_gen(num_cond, seed, num_particles, remask_strat="low_confidence", save
         f.write(joint_prompt + "\n\n")
         f.write("Output: \n")
         f.write(out_decoded[0] + "\n\n")
-        #f.write(f"PPL: {jp_ppl}\n")
 
     # save product output
     for i in range(len(prod_out_decoded)):
@@ -214,30 +208,9 @@ def story_gen(num_cond, seed, num_particles, remask_strat="low_confidence", save
             f.write("Output: \n")
             f.write(f"Particle {i}:\n")
             f.write(prod_out_decoded[i] + "\n\n")
-            #f.write(f"PPL: {prod_ppl[i]}\n")
 
     return jp_ppl, prod_ppl[0]
 
-
-def main_old():
-    seeds = [21] #, 32] #[12, 13, 14, 15, 16]
-    joint_ppl_list = []
-    prod_ppl_list = []
-    
-    for seed in seeds:
-        jp_ppl, prod_ppl = story_gen(seed)
-
-        print(f"\n\nSeed: {seed}, Joint Prompt PPL: {jp_ppl}, Product Prompt PPL: {prod_ppl}")
-
-        joint_ppl_list.append(jp_ppl)
-        prod_ppl_list.append(prod_ppl)
-
-    joint_ppl_list = np.array(joint_ppl_list)
-    prod_ppl_list = np.array(prod_ppl_list)
-
-    print(f"\n\nAverage Joint Prompt PPL: {np.mean(joint_ppl_list)}, Average Product Prompt PPL: {np.mean(prod_ppl_list)}")
-    print(f"Std Joint Prompt PPL: {np.std(joint_ppl_list)}, Std Product Prompt PPL: {np.std(prod_ppl_list)}")
-    return
 
 def main(args):
     num_cond = args.num_cond
