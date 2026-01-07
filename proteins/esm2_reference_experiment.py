@@ -14,6 +14,7 @@ from dplm_denoiser import DPLMDenoiser
 from utils import set_all_seeds
 
 from protein_esm2_reward import ESM2ProteinRewardReference
+from protein_esm2_llhd_reward import ESM2ProperLikelihoodProteinRewardReference
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -88,6 +89,8 @@ def main(args):
     clamp_val = args.clamp_val 
     recent_r_i = args.recent_r_i    
 
+    mask_fill = args.mask_fill
+
     set_all_seeds(seed)
 
     scratch_dir = os.getenv('SCRATCH')
@@ -118,7 +121,7 @@ def main(args):
     print(f"Number of masked positions: {len(mask_positions)}")
 
     # Initialize ESM2 reward function with reference sequence
-    reward_fn = ESM2ProteinRewardReference(
+    reward_fn = ESM2ProperLikelihoodProteinRewardReference(
         reference_sequence=reference_seq,
         tokenizer=tokenizer,
         beta=args.beta,
@@ -137,7 +140,8 @@ def main(args):
                               adaptive_resampling=False,
                               steps=steps,
                               temperature=1.0,
-                              partial_cont = partial_cont)
+                              partial_cont = partial_cont,
+                              partial_mask_fill = mask_fill)
 
     # Create masked input sequence for unguided sampling
     input_seq = create_masked_input_sequence(
@@ -200,7 +204,7 @@ def main(args):
     print("Guided Results: ", output_results_guided)
 
     # Save results
-    saveto = "./dplm_out_reference/reward_guided_esm2_reference_{}_mask_partial_cont_{}_eos_bos_clamp_{}_recent_r_i_{}".format(mask_num, partial_cont, clamp_val, recent_r_i)
+    saveto = "./dplm_out_reference_proper_beta_10/reward_guided_esm2_reference_{}_mask_partial_cont_{}_eos_bos_clamp_{}_recent_r_i_{}_partial_mask_fill_{}".format(mask_num, partial_cont, clamp_val, recent_r_i, mask_fill)
 
     os.makedirs(saveto, exist_ok=True)
     
@@ -249,6 +253,7 @@ def parse_args():
     parser.add_argument("--clamp_val", type=float, default=-1.0, help="Clamp value for reward integration coefficient. Default: no clamping")
     parser.add_argument("--recent_r_i", action='store_true', default = False, help="Use most recent r_i for weight updates")
     parser.add_argument("--mask_num", type=int, default=5, help="Number of masked positions in the sequence. 5 or 10")
+    parser.add_argument("--mask_fill", action='store_true', default = False, help="Use mask filling strategy during reward sampling")
     args = parser.parse_args()
     return args
 

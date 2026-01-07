@@ -57,6 +57,117 @@ class ESM2ProperLikelihoodProteinReward():
 
         return log_transformed_probs
 
+    def _score_sequence_esm2_old(self, sequence):
+        """
+        Score a protein sequence based on ESM2's likelihood predictions.
+        Handles partially masked sequences by only scoring non-masked positions.
+        """
+        # Check if sequence contains mask tokens
+        has_masks = '[MASK]' in sequence or '<mask>' in sequence
+        
+        if has_masks:
+            # Parse the sequence to identify positions and their amino acids
+            # Split by spaces to handle "[MASK] [MASK] L E [MASK] K" format
+            tokens = sequence.split()
+            
+            # Identify which positions have valid amino acids vs masks
+            valid_aas = set('ACDEFGHIKLMNPQRSTVWY')
+            position_aa_pairs = []  # List of (position, amino_acid)
+            
+            for pos, token in enumerate(tokens):
+                if token in valid_aas:
+                    position_aa_pairs.append((pos, token))
+            
+            if not position_aa_pairs:
+                print(f"Warning: No valid amino acids found in sequence '{sequence}'")
+                return 0.0
+            
+            # Replace [MASK] tokens with ESM2's mask token for proper context
+            esm_sequence = []
+            for token in tokens:
+                if token in ['[MASK]', '<mask>']:
+                    esm_sequence.append('<mask>')
+                elif token in valid_aas:
+                    esm_sequence.append(token)
+                else:
+                    # Skip invalid tokens
+                    continue
+            
+            # Join for ESM2 (ESM2 expects sequence without spaces)
+            esm_input = ''.join(esm_sequence)
+            
+            # Tokenize for ESM2
+            inputs = self.esm_tokenizer(
+                esm_input, return_tensors="pt").to(self.device)
+            
+            scores = []
+            
+            with torch.no_grad():
+                outputs = self.esm_model(**inputs)
+                logits = outputs.logits[0]
+                log_probs = torch.log_softmax(logits, dim=-1)
+                
+                # Score only the non-masked positions
+                for orig_pos, aa in position_aa_pairs:
+                    # Position in tokenized sequence (add 1 for BOS token)
+                    token_pos = orig_pos + 1
+                    
+                    if token_pos >= logits.shape[0]:
+                        print(f"Warning: token_pos {token_pos} out of bounds")
+                        continue
+                    
+                    seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(aa)
+                    
+                    if seq_token_id is None:
+                        continue
+                    
+                    score = log_probs[token_pos, seq_token_id].item()
+                    scores.append(score)
+            
+            if not scores:
+                return 0.0
+            
+            return sum(scores) / len(scores)
+    
+        else:
+            # Original behavior for fully unmasked sequences
+            valid_aas = set('ACDEFGHIKLMNPQRSTVWY')
+            cleaned_sequence = ''.join([aa for aa in sequence if aa in valid_aas])
+            
+            if not cleaned_sequence:
+                print(f"Warning: No valid amino acids found in sequence '{sequence}'")
+                return 0.0
+            
+            inputs = self.esm_tokenizer(
+                cleaned_sequence, return_tensors="pt").to(self.device)
+            
+            scores = []
+            
+            with torch.no_grad():
+                outputs = self.esm_model(**inputs)
+                logits = outputs.logits[0]
+                log_probs = torch.log_softmax(logits, dim=-1)
+                
+                for pos in range(len(cleaned_sequence)):
+                    seq_aa = cleaned_sequence[pos]
+                    token_pos = pos + 1
+                    
+                    if token_pos >= logits.shape[0]:
+                        continue
+                    
+                    seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(seq_aa)
+                    
+                    if seq_token_id is None:
+                        continue
+                    
+                    score = log_probs[token_pos, seq_token_id].item()
+                    scores.append(score)
+            
+            if not scores:
+                return 0.0
+            
+            return sum(scores) / len(scores)
+
     def _score_sequence_esm2(self, sequence):
         """
         Score a protein sequence based on ESM2's likelihood predictions.
@@ -198,7 +309,118 @@ class ESM2ProperLikelihoodProteinRewardReference():
 
         return log_transformed_probs
 
-    def _score_sequence_esm2(self, sequence, reference_sequence=None):
+    def _score_sequence_esm2(self, sequence):
+        """
+        Score a protein sequence based on ESM2's likelihood predictions.
+        Handles partially masked sequences by only scoring non-masked positions.
+        """
+        # Check if sequence contains mask tokens
+        has_masks = '[MASK]' in sequence or '<mask>' in sequence
+        
+        if has_masks:
+            # Parse the sequence to identify positions and their amino acids
+            # Split by spaces to handle "[MASK] [MASK] L E [MASK] K" format
+            tokens = sequence.split()
+            
+            # Identify which positions have valid amino acids vs masks
+            valid_aas = set('ACDEFGHIKLMNPQRSTVWY')
+            position_aa_pairs = []  # List of (position, amino_acid)
+            
+            for pos, token in enumerate(tokens):
+                if token in valid_aas:
+                    position_aa_pairs.append((pos, token))
+            
+            if not position_aa_pairs:
+                print(f"Warning: No valid amino acids found in sequence '{sequence}'")
+                return 0.0
+            
+            # Replace [MASK] tokens with ESM2's mask token for proper context
+            esm_sequence = []
+            for token in tokens:
+                if token in ['[MASK]', '<mask>']:
+                    esm_sequence.append('<mask>')
+                elif token in valid_aas:
+                    esm_sequence.append(token)
+                else:
+                    # Skip invalid tokens
+                    continue
+            
+            # Join for ESM2 (ESM2 expects sequence without spaces)
+            esm_input = ''.join(esm_sequence)
+            
+            # Tokenize for ESM2
+            inputs = self.esm_tokenizer(
+                esm_input, return_tensors="pt").to(self.device)
+            
+            scores = []
+            
+            with torch.no_grad():
+                outputs = self.esm_model(**inputs)
+                logits = outputs.logits[0]
+                log_probs = torch.log_softmax(logits, dim=-1)
+                
+                # Score only the non-masked positions
+                for orig_pos, aa in position_aa_pairs:
+                    # Position in tokenized sequence (add 1 for BOS token)
+                    token_pos = orig_pos + 1
+                    
+                    if token_pos >= logits.shape[0]:
+                        print(f"Warning: token_pos {token_pos} out of bounds")
+                        continue
+                    
+                    seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(aa)
+                    
+                    if seq_token_id is None:
+                        continue
+                    
+                    score = log_probs[token_pos, seq_token_id].item()
+                    scores.append(score)
+            
+            if not scores:
+                return 0.0
+            
+            return sum(scores) / len(scores)
+    
+        else:
+            # Original behavior for fully unmasked sequences
+            valid_aas = set('ACDEFGHIKLMNPQRSTVWY')
+            cleaned_sequence = ''.join([aa for aa in sequence if aa in valid_aas])
+            
+            if not cleaned_sequence:
+                print(f"Warning: No valid amino acids found in sequence '{sequence}'")
+                return 0.0
+            
+            inputs = self.esm_tokenizer(
+                cleaned_sequence, return_tensors="pt").to(self.device)
+            
+            scores = []
+            
+            with torch.no_grad():
+                outputs = self.esm_model(**inputs)
+                logits = outputs.logits[0]
+                log_probs = torch.log_softmax(logits, dim=-1)
+                
+                for pos in range(len(cleaned_sequence)):
+                    seq_aa = cleaned_sequence[pos]
+                    token_pos = pos + 1
+                    
+                    if token_pos >= logits.shape[0]:
+                        continue
+                    
+                    seq_token_id = self.esm_tokenizer.convert_tokens_to_ids(seq_aa)
+                    
+                    if seq_token_id is None:
+                        continue
+                    
+                    score = log_probs[token_pos, seq_token_id].item()
+                    scores.append(score)
+            
+            if not scores:
+                return 0.0
+            
+            return sum(scores) / len(scores)
+
+    def _score_sequence_esm2_old(self, sequence, reference_sequence=None):
         if reference_sequence is None:
             reference_sequence = self.reference_sequence
 
