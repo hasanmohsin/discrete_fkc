@@ -29,8 +29,6 @@ def syntax_check(code, verbose = False):
 def extract_longest_valid_code(text: str) -> str:
     lines = text.splitlines()
 
-    if len(lines) > 100:
-        lines = lines[:100]
     max_valid_lines = 0
     max_valid_snippet = ""
 
