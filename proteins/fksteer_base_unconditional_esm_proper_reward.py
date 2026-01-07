@@ -14,7 +14,8 @@ from samplers import DiffusionSampler
 from dplm_denoiser import DPLMDenoiser
 from utils import set_all_seeds
 
-from protein_esm2_reward import ESM2ProteinReward
+#from protein_esm2_reward import ESM2ProteinReward
+from protein_esm2_llhd_reward import ESM2ProperLikelihoodProteinReward
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,7 +38,7 @@ def main(args):
     num_seqs = args.num_seqs
 
     # Initialize without reference sequence
-    reward_fn = ESM2ProteinReward(
+    reward_fn = ESM2ProperLikelihoodProteinReward(
         tokenizer=tokenizer,
         beta = args.beta,  # Adjust this for reward scaling
         hf_cache_dir=hf_cache_dir,
@@ -59,9 +60,10 @@ def main(args):
         device=device
     )
 
-
     x, x0, x_traj = sampler.sample(
-        input_seq, batch_size = num_seqs, return_traj=True, remasking='low_conf_noisy', log_wandb=False)
+        input_seq, batch_size = num_seqs, return_traj=True, 
+        remasking='low_conf_noisy', 
+        log_wandb=False)
 
     num_particles = args.num_particles  #5
     batch_num = args.batch_num 
@@ -75,6 +77,11 @@ def main(args):
 
     input_seq_particles = input_seq_2.reshape(batch_num, num_particles, -1)
     
+    stop_step = int(seq_length * args.stop_frac) if (args.early_stop and args.stop_frac is not None) else None
+    if stop_step is not None and args.early_stop:
+        print("Setting stop step for early stopping to: ", stop_step)
+
+
     set_all_seeds(seed)
     x_r, x0_r, x_traj_r, ess_traj, log_weights_traj = r_sampler.sample(input_seq_particles, 
                                                                        batch_size=batch_num, 
@@ -84,7 +91,9 @@ def main(args):
                                                                         log_wandb=False,
                                                                         sim_mask_fill=True,
                                                                         clamp_val  = args.clamp_val,
-                                                                        use_recent_r_i=args.recent_r_i)
+                                                                        use_recent_r_i=args.recent_r_i,
+                                                                        early_stop = args.early_stop,
+                                                                        stop_step = stop_step)
 
     print("Unguided x: ", x)
     print("Guided x: ", x_r.view(-1, x_r.shape[-1]))
@@ -140,7 +149,7 @@ def main(args):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Unconditional ESM2 Reward")
+    parser = argparse.ArgumentParser(description="Unconditional ESM2 Proper Reward")
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     parser.add_argument("--seq_length", type=int, default=50, help="Sequence length")
     parser.add_argument("--num_particles", type=int, default=5, help="Number of particles")
@@ -150,6 +159,8 @@ def parse_args():
     parser.add_argument("--save", type=str, default="./dplm_out/fk_reward_guided_esm2_uncond_true_mult_1_particle", help="Directory to save outputs")
     parser.add_argument("--recent_r_i", action='store_true', default = False, help="Use most recent r_i for weight updates")
     parser.add_argument("--clamp_val", type=float, default=-1.0, help="Clamp value for reward integration coefficient. Default: no clamping")
+    parser.add_argument("--early_stop", action='store_true', default = False, help="Enable early stopping for reward sampling")
+    parser.add_argument("--stop_frac", type=float, default=None, help="Fraction of steps at which to stop reward updates when early stopping is enabled")
     args = parser.parse_args()
     return args
 
