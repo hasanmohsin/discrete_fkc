@@ -395,11 +395,7 @@ def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_str
         print("\n\nAnneal out.shape: ", anneal_out.shape)
 
         anneal_out_decoded = llada_denoiser.tokenizer.batch_decode(anneal_out, skip_special_tokens=True)
-        #print("Joint Prompt Output: ", out)
    
-        # add template before prod out
-        #for i in range(len(anneal_out_decoded)):
-        #    anneal_out_decoded[i] = no_sp_template[0] + anneal_out_decoded[i]
 
         # sample one from random particles to evaluate
         # take out prompt from output
@@ -446,8 +442,7 @@ def main(args):
 
     if args.only_joint:
         base_acc, anneal_acc = code_gen_naive_only(moe, dataset, num_pts, seed, args.joint_temp, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
-        
-        #base_acc = code_gen_joint_only(moe, dataset, num_pts, seed, args.joint_temp, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
+  
     else:
         base_acc, anneal_acc = code_gen(moe, dataset, num_pts, seed, args.beta, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
 
@@ -494,12 +489,6 @@ def parse_args():
     parser.add_argument('--llada_moe', action='store_true', help='Use Mixture of Experts LLaDA model')
     parser.add_argument('--validation', action='store_true', help='Use validation set instead of test set')
     args = parser.parse_args()
-
-    #args.num_points = 1
-    #args.num_particles= 1
-    #args.savedir = "./results/human_eval_code_gen_1_p_beta_inf_1_particles/"
-    #args.beta = 5.0 
-    #args.remask_strat = "low_confidence"
 
     args.savedir = args.savedir.replace("human_eval", args.dataset)
     return args
