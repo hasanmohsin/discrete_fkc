@@ -104,16 +104,8 @@ def sample_test():
     results = evaluate_code_unit_tests(sample['test_list'], sanitize.sanitize(sample['code'], entrypoint=sample['entry_point']))
 
 
-    #print("\nEvaluation Results:\n", results)
-
 def main():
-
-    #denoiser = LLaDADenoiser(device='cuda')
     sample_test()
-
-    #sampler = DiffusionSampler(denoiser=denoiser, steps=128, temperature=1.0)
-    #prod_sampler = ProductPromptSampler(denoiser=denoiser, resample=True, 
-    #                                    steps=128, temperature=1.0)
 
 if __name__ == "__main__":
     main()
