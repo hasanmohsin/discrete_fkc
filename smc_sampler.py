@@ -324,7 +324,7 @@ class RewardSampler(SMCSampler):
         # log weights for resampling 
         
         #log_mu = base_logits
-        
+
         log_mu_r = r_logits 
         
         summand =  1.0 - log_mu_r.exp().sum(dim=-1)
@@ -361,6 +361,10 @@ class RewardSampler(SMCSampler):
         g_all_tok = sum_val + delta_b * r_i.unsqueeze(-1)
 
         print("integ coeffs: ", integ_coeff)
+
+        if self.early_stop and step > self.stop_step:
+            print("Early stopping enabled, zeroing out weight updates.")
+            g_all_tok = torch.zeros_like(g_all_tok)
 
         return g_all_tok
 
@@ -503,11 +507,17 @@ class RewardSampler(SMCSampler):
     # batch size is the number of particles
     @torch.no_grad()
     def sample(self, init_seq = None, batch_size = 2, num_particles = 5, cfg_scale = 0., remasking='low_confidence', return_traj = False, 
-               log_wandb = False, eos_bos = False, sim_mask_fill = False, clamp_val=-1, use_recent_r_i=False):
+               log_wandb = False, eos_bos = False, sim_mask_fill = False, clamp_val=-1, use_recent_r_i=False, early_stop = False, stop_step = None):
         
         self.sim_mask_fill = sim_mask_fill 
         self.clamp_val = clamp_val
         self.use_recent_r_i = use_recent_r_i
+        self.early_stop = early_stop
+        self.stop_step = stop_step
+        
+        if self.early_stop and self.stop_step is None:
+            self.stop_step = self.steps // 2
+            print("Early stopping enabled but stop_step not provided, setting stop_step to half of total steps: ", self.stop_step)
 
         if init_seq is not None:
             x = init_seq.clone().to(self.denoiser.device)
