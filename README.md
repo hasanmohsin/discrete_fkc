@@ -2,7 +2,7 @@
 
 Code for Discrete Feynman-Kac Correctors.
 
-
+<img width="2000" height="1771" alt="image" src="https://github.com/user-attachments/assets/98f99b67-d16d-48c8-8082-b182718f21c6" />
 
 
 For Protein experiments with ESM2 reward, an example prompt is:
