@@ -1,4 +1,9 @@
-Code for Discrete Feynman Correctors
+## Discrete Feynman-Kac Correctors
+
+Code for Discrete Feynman-Kac Correctors.
+
+
+
 
 For Protein experiments with ESM2 reward, an example prompt is:
 
