@@ -29,12 +29,7 @@ class DiagRewardFunction():
         self.name = "DiagRewardFunction"
 
         if dimensionality == 2 and side_length == 4:
-            #self.log_r_table = torch.tensor(
-            #    [[-5.0, -5.0, -5.0, -5.0],
-            #     [-5.0,  -5.0, -5.0, -0.0],
-            #     [-0.0, -0.0,  0.0, -5.0],
-            #     [-5.0, -5.0, -5.0, -5.0]], device=self.device
-            #)
+            
             self.log_r_table = torch.tensor(
                 [[-0.0, -5.0, -5.0, -5.0],
                  [-5.0,  -0.0, -5.0, -5.0],
@@ -66,18 +61,12 @@ class DiagRewardFunction():
                 "Expected input of shape (batch_size, 2)"
             )
 
-        #if self.dimensionality == 2 and self.side_length == 4:
-        #    #print("Querying table")
-        #    return self.log_r_table[samples[:,0], samples[:,1]]
-
-        
+      
         prop = (samples + 1) / self.side_length
 
         rewards = torch.full((prop.shape[0],), -1.0, device=self.device)  # Initialize rewards tensor
 
         cond = (prop[..., 0] + prop[..., 1] <= 1)
-
-        #cond = (prop[..., 0] + prop[..., 1] >= 0.8) & (prop[..., 0] + prop[..., 1] <= 1.2) 
 
         # make reward high for everything in the bottom left quadrant
         rewards[cond] = torch.tensor(0.0).to(self.device)
@@ -152,8 +141,7 @@ def main():
         t_reward_arr[indices] = r_val + log_prob_value 
 
 
-        #print(f"Indices: {indices}, Log Probability: {log_prob_value.item()}, Reward: {r_val.item()}")
-
+      
     # sample from reward using it as distribution
     torch.distributions.Categorical(t_reward_arr.view(-1))
 
