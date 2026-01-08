@@ -14,7 +14,7 @@ from code_utils import *
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from samplers import DiffusionSampler
-from prod_prompt_samplers import ProductPromptSampler, GeoAvgPromptSampler
+
 from smc_sampler import AnnealSampler
 from llada_denoiser import LLaDADenoiser
 from utils import *
