@@ -33,6 +33,8 @@ python randomized_story_exp.py --seed 0 --num_cond 10 --num_particles 8 --remask
 
 ### For Protein experiments:
 
+Running these experiments will require setting up the environment in [the DPLM repo](https://github.com/bytedance/dplm).
+
 - ESM2 reward:
 ```
 python unconditional_esm_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_esm2_reward"
