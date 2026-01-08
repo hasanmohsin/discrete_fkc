@@ -48,8 +48,6 @@ python thermostability_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 
 
 ### For Ising model experiments:
 
-Running these experiments will require setting up the environment in [the DPLM repo](https://github.com/bytedance/dplm).
-
 - hyperparameter search:
 ```
 cd ising
