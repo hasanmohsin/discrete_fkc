@@ -1,5 +1,6 @@
 import torch
 
+# code from LEAPS repository https://github.com/malbergo/leaps/blob/eb3700c8ccf3b72402df3ed806f225457982c08b/src/modules/resample.py 
 
 def systematic_resample(weights):
     """Performs the systematic resampling algorithm used by particle filters.
