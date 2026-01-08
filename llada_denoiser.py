@@ -103,37 +103,3 @@ class LLaDADenoiser(Denoiser):
         return logits 
     
 
-
-class LLaDAMOEDenoiser(LLaDADenoiser):
-
-    def __init__(self, device ='cuda', save_to_hf_cache = True):
-        super().__init__(device, save_to_hf_cache)
-        self.name = 'LLaDA-MoE-7B-A1B-Instruct'
-        self.model = AutoModel.from_pretrained('inclusionAI/'+ self.name, 
-                                               cache_dir = self.hf_cache_dir, 
-                                               trust_remote_code=True, 
-                                               torch_dtype=torch.bfloat16)
-        
-        self.tokenizer = AutoTokenizer.from_pretrained('inclusionAI/'+self.name, 
-                                                       cache_dir = self.hf_cache_dir, 
-                                                       trust_remote_code=True)
-        self.model.to(self.device).eval()
-
-        self.mask_token = 156895
-
-    def apply_prompt_template(self, prompt_list):
-
-        if "Instruct" not in self.name:
-            return prompt_list
-        
-        # process for instruct model 
-        new_prompts = []
-        
-        # Add special tokens for the Instruct model. The Base model does not require the following two lines.
-        for p in prompt_list:
-            m = [{"role": "system", "content": "You are a helpful AI assistant."}, 
-                 {"role": "user", "content": p}]
-            new_prompt = self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False)
-            new_prompts.append(new_prompt)
-
-        return new_prompts

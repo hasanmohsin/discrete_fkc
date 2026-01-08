@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from samplers import DiffusionSampler
 from prod_prompt_samplers import ProductPromptSampler, GeoAvgPromptSampler
 from smc_sampler import AnnealSampler
-from llada_denoiser import LLaDADenoiser, LLaDAMOEDenoiser
+from llada_denoiser import LLaDADenoiser
 from utils import *
 from eval import * 
 
@@ -190,13 +190,10 @@ def process_sample(sample, dataset):
     return sample
 
 
-def code_gen_naive_only(moe, dataset, num_datapoints, seed, naive_temp, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None):
+def code_gen_naive_only(dataset, num_datapoints, seed, naive_temp, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None):
     set_all_seeds(seed)
 
-    if moe:
-        llada_denoiser = LLaDAMOEDenoiser(device='cuda')
-    else:
-        llada_denoiser = LLaDADenoiser(device='cuda')
+    llada_denoiser = LLaDADenoiser(device='cuda')
 
     steps = 128
     gen_length = steps
@@ -290,13 +287,10 @@ def code_gen_naive_only(moe, dataset, num_datapoints, seed, naive_temp, num_part
               
     return base_eval_list, anneal_eval_list
 
-def code_gen(moe, dataset, num_datapoints, seed, beta, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None, compute_ppl = False):
+def code_gen(dataset, num_datapoints, seed, beta, num_particles, remask_strat="low_confidence", savedir="./results/human_eval_out_prod_random/", cutoff_resample=None, compute_ppl = False):
     set_all_seeds(seed)
 
-    if moe:
-        llada_denoiser = LLaDAMOEDenoiser(device='cuda')
-    else:
-        llada_denoiser = LLaDADenoiser(device='cuda')
+    llada_denoiser = LLaDADenoiser(device='cuda')
 
     steps = 128
     gen_length = steps
@@ -438,13 +432,12 @@ def main(args):
     remask_strat = args.remask_strat
     savedir = args.savedir
     dataset = args.dataset
-    moe = args.llada_moe
 
     if args.only_joint:
-        base_acc, anneal_acc = code_gen_naive_only(moe, dataset, num_pts, seed, args.joint_temp, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
+        base_acc, anneal_acc = code_gen_naive_only(dataset, num_pts, seed, args.joint_temp, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
   
     else:
-        base_acc, anneal_acc = code_gen(moe, dataset, num_pts, seed, args.beta, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
+        base_acc, anneal_acc = code_gen(dataset, num_pts, seed, args.beta, num_particles, remask_strat, savedir, cutoff_resample = args.cutoff_resample)
 
     print("\n\nAverage Naive Temp Accuracy over {} points: ".format(num_pts), np.array(base_acc).mean())
     print("Average SMC Anneal Accuracy over {} points: ".format(num_pts), np.array(anneal_acc).mean())
@@ -486,7 +479,6 @@ def parse_args():
     parser.add_argument("--only_joint", action='store_true', help="Only generate joint prompt")
     parser.add_argument("--joint_temp", type=float, default=1.0, help="Temperature for joint prompt sampling")
     parser.add_argument('--beta', type=float, default=1.0, help='Beta value for annealing sampler')
-    parser.add_argument('--llada_moe', action='store_true', help='Use Mixture of Experts LLaDA model')
     parser.add_argument('--validation', action='store_true', help='Use validation set instead of test set')
     args = parser.parse_args()
 
