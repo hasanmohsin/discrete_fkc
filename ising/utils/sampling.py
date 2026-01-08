@@ -3,6 +3,13 @@ from tqdm import tqdm
 import einops
 import numpy as np
 
+def get_sigma(t, schedule):
+    sigma_max = 10.0
+    if schedule == 'linear':
+        return sigma_max*t, sigma_max
+    if schedule == 'sine':
+        return sigma_max*np.sin(t*np.pi/2), np.pi*sigma_max*np.cos(t*np.pi/2)/2
+
 def get_distr_from_samples(samples, dim_x, dim_y):
     inds, counts = torch.unique(samples, return_counts=True, dim=0)
     sampled_distr = torch.zeros(dim_x, dim_y, dtype=int, device=samples.device)
@@ -77,17 +84,20 @@ def sample_step_product(x_t, t, dt, dim_1d, Q, model1, model2, reweight=False):
     else:
         return x_t, w_temp
 
-def generate_result_annealing(num_samples, minibatch_size, t_max, num_steps, dim_1d, device, Q, model, beta=1.0, reweight=False, data_dim=2):
+def generate_result_annealing(num_samples, minibatch_size, schedule, num_steps, dim_1d, device, Q, model, beta=1.0, reweight=False, data_dim=2):
     x = torch.randint(0, dim_1d, size=(num_samples, data_dim), device=device).long()
-    t = t_max
-    dt = t_max/num_steps
+    t = 1.0
+    dt = 1.0/num_steps
     unique_samples = torch.zeros(num_steps)
     with torch.no_grad():
         for i in tqdm(range(num_steps)):
             for minibatch in range(num_samples//minibatch_size):
                 start_i = minibatch*minibatch_size
                 end_i = (minibatch+1)*minibatch_size
-                x[start_i:end_i,:], ww = sample_step_annealing(x[start_i:end_i,:], t*torch.ones(minibatch_size,1,device=device), dt, dim_1d, Q, model, beta=beta, reweight=reweight)
+                time, deriv = get_sigma(t, schedule)
+                time_cur = time*torch.ones(minibatch_size,1,device=device)
+                dt_cur = dt*deriv
+                x[start_i:end_i,:], ww = sample_step_annealing(x[start_i:end_i,:], time_cur, dt_cur, dim_1d, Q, model, beta=beta, reweight=reweight)
             t -= dt
             unique_samples[i] = len(torch.unique(ww))
     return x, unique_samples

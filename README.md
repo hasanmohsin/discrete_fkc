@@ -46,4 +46,17 @@ python unconditional_esm_reward_exp.py --seed 0 --seq_length 50 --num_particles 
 python thermostability_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_thermo_reward"
 ``` 
 
+### For Ising model experiments:
 
+Running these experiments will require setting up the environment in [the DPLM repo](https://github.com/bytedance/dplm).
+
+- hyperparameter search:
+```
+cd ising
+python train.py --data_path {path to torch tensor with samples to train} --results_dir {dir to save models}
+```
+
+- Generate and save samples with new beta:
+```
+python sampling.py --model_path {path to trained model} --save_dir {dir to save samples} --beta_train 0.3 --beta_target 0.35
+``` 

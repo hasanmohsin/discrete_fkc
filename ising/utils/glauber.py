@@ -211,6 +211,70 @@ def swendsen_wang_step_open(spins, beta, device="cuda"):
     new_spins = spins_cpu * flips
     return torch.tensor(new_spins, device=device, dtype=spins.dtype)
 
+def swendsen_wang_step_periodic(spins, beta, device="cuda"):
+    """
+    One Swendsen–Wang update for 2D Ising model with periodic boundaries.
+    spins: (L,L) tensor with values ±1
+    beta: inverse temperature
+    """
+    L = spins.shape[0]
+    spins = spins.to(device)
+    p = 1.0 - torch.exp(-2.0 * beta)  # J=1
+
+    # --- Neighbor bonds (periodic: wraparound via torch.roll) ---
+    # Right bonds: bond between (i, j) and (i, (j+1) % L)
+    bond_right = (spins == torch.roll(spins, shifts=-1, dims=1)) & \
+                 (torch.rand((L, L), device=device) < p)
+
+    # Down bonds: bond between (i, j) and ((i+1) % L, j)
+    bond_down  = (spins == torch.roll(spins, shifts=-1, dims=0)) & \
+                 (torch.rand((L, L), device=device) < p)
+
+    # ---- cluster labeling (union-find on CPU, fine for 16x16) ----
+    bonds_cpu = (bond_right.cpu().numpy(), bond_down.cpu().numpy())
+    spins_cpu = spins.cpu().numpy()
+
+    parent = np.arange(L * L)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    # Right bonds: (i, j) ↔ (i, (j+1) % L)
+    for i in range(L):
+        for j in range(L):
+            if bonds_cpu[0][i, j]:
+                x = i * L + j
+                y = i * L + ((j + 1) % L)
+                union(x, y)
+
+    # Down bonds: (i, j) ↔ ((i+1) % L, j)
+    for i in range(L):
+        for j in range(L):
+            if bonds_cpu[1][i, j]:
+                x = i * L + j
+                y = ((i + 1) % L) * L + j
+                union(x, y)
+
+    # Relabel clusters
+    labels = np.array([find(i) for i in range(L * L)]).reshape(L, L)
+
+    # Random flips per cluster
+    unique_clusters = np.unique(labels)
+    flip_dict = {c: (1 if torch.rand(1).item() < 0.5 else -1)
+                 for c in unique_clusters}
+    flips = np.vectorize(flip_dict.get)(labels)
+
+    new_spins = spins_cpu * flips
+    return torch.tensor(new_spins, device=device, dtype=spins.dtype)
+
 def autocorr_fft(x):
     """Return normalized autocorrelation function r[k] for k=0..n-1"""
     x = np.asarray(x, dtype=np.float64)
