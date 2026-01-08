@@ -6,7 +6,7 @@ Code for Discrete Feynman-Kac Correctors.
 
 Example commands for running various experiments are given below:
 
-For language:
+### For Language experiments:
 
 - coding problems with annealing:
   - Human eval dataset
@@ -31,7 +31,7 @@ python randomized_story_exp.py --seed 0 --num_cond 10 --num_particles 8 --remask
 ```
 
 
-For Protein experiments:
+### For Protein experiments:
 
 - ESM2 reward:
 ```
