@@ -6,16 +6,16 @@ Code for Discrete Feynman-Kac Correctors.
 
 Example commands for running various experiments are given below:
 
-For language:
+### For Language experiments:
 
 - coding problems with annealing:
   - Human eval dataset
   ```
-  python code_anneal_eval_exp.py --dataset "human_eval" --num_points 10 --seed ${seed} --num_particles ${num_particle} --savedir "./hparam_results/human_eval_seed_${seed}_rand_code_gen_10p_beta_${beta}_${num_particle}_particles/" --beta 10.0 
+  python code_anneal_eval_exp.py --dataset "human_eval" --num_points -1 --seed 0 --num_particles 4 --savedir "./results/human_eval/" --beta 10.0 
   ```
   - MBPP dataset:
   ```
-  python code_anneal_eval_exp.py --dataset "mbpp_san" --num_points -1 --seed ${seed} --num_particles 4 --savedir "./results/mbpp_san_seed_${seed}_rand_code_gen_all_p_beta_20_4_particles/" --beta 20.0 
+  python code_anneal_eval_exp.py --dataset "mbpp_san" --num_points -1 --seed 0 --num_particles 4 --savedir "./results/mbpp_san/" --beta 20.0 
   ``` 
 
 - amortized linear regression with products:
@@ -31,11 +31,11 @@ python randomized_story_exp.py --seed 0 --num_cond 10 --num_particles 8 --remask
 ```
 
 
-For Protein experiments:
+### For Protein experiments:
 
 - ESM2 reward:
 ```
-python unconditional_esm_reward.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_esm2_reward"
+python unconditional_esm_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 --batch_num 1 --num_seqs 5 --beta 10.0 --save "./results/dplm_out_esm2_reward"
 ```
 
 - Thermostability reward:
