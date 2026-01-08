@@ -48,7 +48,7 @@ python thermostability_reward_exp.py --seed 0 --seq_length 50 --num_particles 5 
 
 ### For Ising model experiments:
 
-- hyperparameter search:
+- Model training/hyperparameter search:
 ```
 cd ising
 python train.py --data_path {path to torch tensor with samples to train} --results_dir {dir to save models}
