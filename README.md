@@ -1,6 +1,6 @@
 # Discrete Feynman-Kac Correctors
 
-Implementation for Discrete Feynman-Kac Correctors.
+Implementation for [Discrete Feynman-Kac Correctors](https://arxiv.org/abs/2601.10403).
 
 ![alt_text](images/dfkc_abstract_large.png "Overview for Discrete Feynman-Kac Correctors")
 
