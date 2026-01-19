@@ -130,12 +130,8 @@ class AnnealSampler(SMCSampler):
         coeff = self.beta * (self.steps * (i)**(self.beta - 1) / (self.steps - i)**self.beta) 
 
         if integrate:
-           #print("Would be coeff step {}: ".format(i), coeff)
            coeff = self.integrated_coeff(i)
-           #100*coeff # to avoid very small coeff at last step for small number of steps
-           #print("\n\nLarge coeff at final step to avoid numerical issues for small number of steps")
-
-        print("Coeff at step {}: ".format(i), coeff)
+          
 
         log_denoiser_anneal = (log_mu)*self.beta 
         score_anneal_sum = coeff * (log_denoiser_anneal.exp()).sum(dim=-1)  # b, l
@@ -179,7 +175,6 @@ class AnnealSampler(SMCSampler):
 
         mask_index = (x == self.mask_token)
         num_transfer_tokens = self.get_num_transfer_tokens(mask_index, self.steps)
-        #print("num_transfer tokens: ", num_transfer_tokens)
 
 
         if return_traj:
@@ -252,8 +247,6 @@ class AnnealSampler(SMCSampler):
             # resample (weights may be set to 0 after resampling)
             ess_batch = []
             for b in range(batch_size):
-                #print("\nstep: {}, batch: {}".format(i, b))
-                #print("log weights before resampling: ", log_weights_norm[b].squeeze(-1).cpu().numpy())
                 x_r[b], log_weights_r[b], ess_b = self.resample_op(log_weights_norm[b], x_r[b], num_particles = num_particles, i = i)
                 ess_batch.append(ess_b.item())
 
@@ -339,9 +332,6 @@ class RewardSampler(SMCSampler):
             t_less = 1/(5*self.eff_steps)
         integ_coeff = torch.log(t/(t_less))
     
-        #if self.clamp_val > 0:
-        #    print("integral coeff before clamp: ", integ_coeff)
-        #    integ_coeff = torch.clamp(integ_coeff, max=self.clamp_val)
 
         over_t_ratio = self.eff_steps / (self.eff_steps - eff_step)  
         coeff = - over_t_ratio #/ t
@@ -355,12 +345,9 @@ class RewardSampler(SMCSampler):
         sum_val = -integ_coeff*summand 
 
         if self.clamp_val > 0:
-            print("sum val mean before clamp: ", sum_val.abs().mean())
             sum_val = torch.clamp(sum_val, max=self.clamp_val)
 
         g_all_tok = sum_val + delta_b * r_i.unsqueeze(-1)
-
-        print("integ coeffs: ", integ_coeff)
 
         if self.early_stop and step > self.stop_step:
             print("Early stopping enabled, zeroing out weight updates.")
@@ -400,11 +387,6 @@ class RewardSampler(SMCSampler):
         B, L, V = logits.shape
         r_j = r_i.reshape((B, 1, 1)).repeat(1, L, V)  # [B, L, V]
 
-        print("B: ", B)
-        print("L: ", L)
-        print("V: ", V)
-        
-
         row_idx, selected_idx = torch.where(base_transfer_idx)      
         
 
@@ -422,8 +404,6 @@ class RewardSampler(SMCSampler):
                 #if masked: 
                 x_neighbour = x[b, ...].clone() #[L,]
 
-                #print("x neighbour size: ", x_neighbour.shape)
-
             
                 x_neighbour[l] = v
 
@@ -436,12 +416,6 @@ class RewardSampler(SMCSampler):
               
                 r_tilted_logits[b, l, v] = logits[b, l, v] + self.anneal_schedule(step) * (r_j[b, l, v] - r_i[b])
 
-                
-
-
-        print("r_tilted_logits shape: ", r_tilted_logits.shape)
-        print("r_i shape: ", r_i.shape)
-        print("r_j shape: ", r_j.shape)
 
         return r_tilted_logits, r_j, r_i
 
@@ -494,9 +468,7 @@ class RewardSampler(SMCSampler):
         confidence = torch.where(mask_index, x0_p, -np.inf)
 
         transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
-        
-        #print("logits shape: ", base_logits.shape)
-        #print("transfer index shape: ", transfer_index.shape)
+
 
         for j in range(confidence.shape[0]):
             _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
@@ -533,7 +505,7 @@ class RewardSampler(SMCSampler):
                 num_masked = (x == self.mask_token).sum(dim=-1)[0, 0].item()
                 self.step_start_val = (self.actual_len) - num_masked
                 self.eff_steps = self.actual_len 
-                print("Eff steps: ", self.eff_steps)
+
                 print("Starting reward annealing schedule at step: ", self.step_start_val)
                 self.anneal_schedule = lambda i: (i + self.step_start_val) / self.eff_steps
             else:
@@ -585,7 +557,6 @@ class RewardSampler(SMCSampler):
 
         mask_index = (x == self.mask_token)
         num_transfer_tokens = self.get_num_transfer_tokens(mask_index, self.steps)
-        #print("num_transfer tokens: ", num_transfer_tokens)
 
 
         if return_traj:
@@ -645,21 +616,15 @@ class RewardSampler(SMCSampler):
             log_weights = log_weights + g.unsqueeze(-1) #* num_transfer_tokens[:, i].unsqueeze(-1) / self.steps # num_samples, 1
 
             # for numerical stability
-            #log_weights = log_weights - log_weights.max(dim=0, keepdim=True).values
             log_weights_r = log_weights.view(batch_size, num_particles, 1)
             log_weights_norm = log_weights_r - log_weights_r.logsumexp(dim=1, keepdim=True)
             
-            #print("\nstep ", i)
-            #print("log weights: ", log_weights_norm[0, :])
 
             x_r = x.view(batch_size, num_particles, self.length)
 
             # resample (weights may be set to 0 after resampling)
             ess_batch = []
             for b in range(batch_size):
-                #print("x_r shape: ", x_r.shape)
-                #print("log_weights_norm shape: ", log_weights_norm.shape)
-                #print("num_particles: ", num_particles)
 
                 x_r[b], log_weights_r[b], ess_b = self.resample_op(log_weights_norm[b], x_r[b], num_particles = num_particles, i = i)
                 ess_batch.append(ess_b.item())

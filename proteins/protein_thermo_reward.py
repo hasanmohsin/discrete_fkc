@@ -6,13 +6,18 @@ import os
 import sys 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+print("path: ", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from replearning_dplm._dplm.dplm_regression_model import DPLMRegressionModel
 
 # Add the parent directory to Python path to access dplm
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
+print("parent path: ", parent_dir)
+
+# append the dplm repo path
+dplm_repo_path = os.path.join(parent_dir, "dplm")
+sys.path.append(dplm_repo_path)
 
 #from byprot.models.dplm import DiffusionProteinLanguageModel as DPLM
 from dplm.generate_dplm import initialize_generation
@@ -60,8 +65,6 @@ class Thermostability():
        
         with torch.no_grad():
             outputs = self.model({'input_ids': input_seq.to(self.device)})
-
-        print("Thermostability outputs: ", outputs)
 
         return self.beta * torch.log(outputs)
     
