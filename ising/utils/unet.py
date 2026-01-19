@@ -3,9 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# -------------------------
-# Utilities
-# -------------------------
 def sinusoidal_embedding(timesteps, dim):
     """
     timesteps: (B,) integer/float tensor
@@ -20,10 +17,6 @@ def sinusoidal_embedding(timesteps, dim):
         emb = F.pad(emb, (0, 1))
     return emb  # (B, dim)
 
-
-# -------------------------
-# ResBlock with Time FiLM
-# -------------------------
 class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, time_emb_dim):
         super().__init__()
@@ -35,9 +28,9 @@ class ResBlock(nn.Module):
             groups2 -= 1
 
         self.norm1 = nn.GroupNorm(groups1, in_ch)
-        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, padding_mode='circular')
         self.norm2 = nn.GroupNorm(groups2, out_ch)
-        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, padding_mode='circular')
 
         self.time_fc = nn.Linear(time_emb_dim, out_ch)
         self.skip = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
@@ -48,16 +41,12 @@ class ResBlock(nn.Module):
         t_emb: (B, time_emb_dim)
         """
         h = self.conv1(F.silu(self.norm1(x)))
-        # FiLM-like add (broadcast)
         t_out = self.time_fc(t_emb)[:, :, None, None]
         h = h + t_out
         h = self.conv2(F.silu(self.norm2(h)))
         return h + self.skip(x)
 
 
-# -------------------------
-# Attention Block (spatial)
-# -------------------------
 class AttentionBlock(nn.Module):
     def __init__(self, channels, num_heads=4):
         super().__init__()
@@ -78,26 +67,21 @@ class AttentionBlock(nn.Module):
         """
         B, C, H, W = x.shape
         h = self.norm(x)
-        # flatten spatial dims to sequence
         seq = h.view(B, C, H * W).permute(2, 0, 1)   # (L=N, B, C)
         attn_out, _ = self.mha(seq, seq, seq, need_weights=False)  # (L, B, C)
         attn_out = attn_out.permute(1, 2, 0).view(B, C, H, W)
         return x + self.proj_out(attn_out)  # residual
 
 
-# -------------------------
-# Up/Down sampling helpers
-# -------------------------
 def downsample_conv(in_ch, out_ch):
-    return nn.Conv2d(in_ch, out_ch, kernel_size=4, stride=2, padding=1)  # halves spatial dims
+    return nn.Conv2d(in_ch, out_ch, kernel_size=4, stride=2, padding=1, padding_mode='circular')
 
 def upsample_conv(in_ch, out_ch):
-    return nn.ConvTranspose2d(in_ch, out_ch, kernel_size=4, stride=2, padding=1)  # doubles spatial dims
+    return nn.Sequential(
+        nn.Upsample(scale_factor=2, mode='nearest'),
+        nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, padding_mode='circular')
+    )
 
-
-# -------------------------
-# Upgraded Spin U-Net
-# -------------------------
 class SpinUNetUpgraded(nn.Module):
     def __init__(self, base_channels=64, time_emb_dim=256):
         super().__init__()
