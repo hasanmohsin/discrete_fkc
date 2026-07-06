@@ -306,7 +306,7 @@ def code_gen(dataset, num_datapoints, seed, beta, num_particles, remask_strat="l
    
     anneal_sampler = AnnealSampler(denoiser = llada_denoiser, 
                                    beta = beta,
-                                   resample = False,
+                                   resample = True,
                                    adaptive_resampling=False, 
                                    steps=steps, 
                                    temperature=1.0)
